@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/kalw/training-platform/internal/auth"
+	"github.com/kalw/training-platform/internal/content"
 	"github.com/kalw/training-platform/internal/dockershim"
 	"github.com/kalw/training-platform/internal/router"
 	"github.com/kalw/training-platform/internal/server"
@@ -47,6 +48,8 @@ func main() {
 		cmdShim(os.Args[2:])
 	case "router":
 		cmdRouter(os.Args[2:])
+	case "build":
+		cmdBuild(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println(version.String())
 	case "-h", "--help", "help":
@@ -65,10 +68,25 @@ usage:
   training serve    [flags]   run the composed platform
   training shim     [flags]   run only the Docker-API -> Kubernetes shim
   training router   [flags]   run only the exposed-port router
+  training build    [flags]   render Markdown lessons -> HTML + challenges.json
   training version            print build info
 
 run "training <subcommand> -h" for subcommand flags
 `)
+}
+
+func cmdBuild(args []string) {
+	fs := flag.NewFlagSet("build", flag.ExitOnError)
+	src := fs.String("src", "lessons", "directory of Markdown lessons")
+	out := fs.String("out", "site", "output directory for HTML + challenges.json")
+	salt := fs.String("salt", envOr("CTFD_SALT", "insecure-default-salt"), "scoring salt (must match the deployment)")
+	_ = fs.Parse(args)
+
+	n, challenges, err := content.BuildDir(*src, *out, *salt)
+	if err != nil {
+		log.Fatalf("build: %v", err)
+	}
+	log.Printf("rendered %d lesson(s), %d challenge(s) -> %s (challenges.json included)", n, len(challenges), *out)
 }
 
 func cmdServe(args []string) {
@@ -82,6 +100,7 @@ func cmdServe(args []string) {
 	enableShim := fs.Bool("enable-shim", envBool("ENABLE_SHIM", true), "mount the Docker-API shim under /docker/")
 	shimNS := fs.String("shim-namespace", envOr("SHIM_NS", "training-sessions"), "namespace the Docker shim materializes containers into")
 	salt := fs.String("salt", os.Getenv("CTFD_SALT"), "scoring salt (must match the lessons build)")
+	challengesFile := fs.String("challenges-file", envOr("CHALLENGES_FILE", ""), "JSON challenges file to seed scoring at boot")
 	baseURL := fs.String("base-url", envOr("BASE_URL", ""), "external origin, for social-login redirect URLs")
 	_ = fs.Parse(args)
 
@@ -94,6 +113,7 @@ func cmdServe(args []string) {
 		EnableShim:             *enableShim,
 		ShimNamespace:          *shimNS,
 		Salt:                   *salt,
+		ChallengesFile:         *challengesFile,
 		// Social login: providers enable themselves when their client
 		// id/secret env vars are present. See internal/auth.
 		Auth: auth.Options{
@@ -112,7 +132,7 @@ func cmdServe(args []string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go server.RunGC(ctx, eng, time.Minute)
+	go server.RunGC(ctx, eng, *termNS, time.Minute)
 
 	srv := &http.Server{Addr: *addr, Handler: h}
 	go func() {

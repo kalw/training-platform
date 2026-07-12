@@ -64,6 +64,13 @@ type Options struct {
 // New builds a Manager. It returns (nil, nil) when no provider is configured,
 // letting callers treat "no social login" as a valid, anonymous mode.
 func New(o Options) (*Manager, error) {
+	// Decide up front whether any provider is even configured; with none, the
+	// platform runs anonymously and no Secret is needed (checked below).
+	hasGitHub := o.GitHubClientID != "" && o.GitHubClientSecret != ""
+	hasGoogle := o.GoogleClientID != "" && o.GoogleClientSecret != ""
+	if !hasGitHub && !hasGoogle {
+		return nil, nil
+	}
 	if o.Secret == "" {
 		return nil, fmt.Errorf("auth: Secret is required when a provider is set")
 	}

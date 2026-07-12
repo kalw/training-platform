@@ -11,6 +11,8 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -155,6 +157,79 @@ func (e *Engine) InstanceNew(ctx context.Context, sessionID, name, image string)
 	return &Instance{Name: name, SessionID: sessionID, IP: ip, Image: image}, nil
 }
 
+// NewEphemeralInstance creates a privileged instance Pod directly in an
+// existing namespace (rather than a per-session one) and waits for its IP.
+// It's what the sessions HTTP API uses so a rendered lesson can boot a
+// terminal in the shared session namespace the terminal bridge execs into.
+// The Pod is labelled with a TTL for GCExpiredPods. image may be empty.
+func (e *Engine) NewEphemeralInstance(ctx context.Context, ns, image string) (*Instance, error) {
+	if image == "" {
+		image = e.dindImg
+	}
+	name := "i-" + randSuffix()
+	priv := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels: map[string]string{
+				managedByLabel: managedByValue,
+				expiresAtLabel: fmt.Sprintf("%d", time.Now().Add(e.ttl).Unix()),
+			},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{
+				Name:            instancePodName,
+				Image:           image,
+				TTY:             true,
+				Stdin:           true,
+				SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+			}},
+		},
+	}
+	if _, err := e.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return nil, fmt.Errorf("creating instance pod: %w", err)
+	}
+	ip, err := e.waitForIP(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	return &Instance{Name: name, IP: ip, Image: image}, nil
+}
+
+// GCExpiredPods deletes managed instance Pods in ns whose TTL has passed.
+func (e *Engine) GCExpiredPods(ctx context.Context, ns string) (int, error) {
+	list, err := e.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: managedByLabel + "=" + managedByValue})
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	deleted := 0
+	for i := range list.Items {
+		p := &list.Items[i]
+		var exp int64
+		_, _ = fmt.Sscanf(p.Labels[expiresAtLabel], "%d", &exp)
+		if exp != 0 && exp < now {
+			grace := int64(0)
+			if err := e.cs.CoreV1().Pods(ns).Delete(ctx, p.Name, metav1.DeleteOptions{GracePeriodSeconds: &grace}); err == nil {
+				deleted++
+			}
+		}
+	}
+	return deleted, nil
+}
+
+// DeletePod removes a Pod by name from ns (used by the sessions API DELETE).
+func (e *Engine) DeletePod(ctx context.Context, ns, name string) error {
+	grace := int64(0)
+	err := e.cs.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: &grace})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 // InstanceDelete removes an instance Pod.
 func (e *Engine) InstanceDelete(ctx context.Context, sessionID, name string) error {
 	grace := int64(0)
@@ -163,6 +238,12 @@ func (e *Engine) InstanceDelete(ctx context.Context, sessionID, name string) err
 		return nil
 	}
 	return err
+}
+
+func randSuffix() string {
+	b := make([]byte, 5)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func (e *Engine) waitForIP(ctx context.Context, ns, name string) (string, error) {

@@ -20,6 +20,24 @@ func Handler(store *Store, userIDFunc func(*http.Request) string) http.Handler {
 		userIDFunc = func(*http.Request) string { return "anonymous" }
 	}
 	mux := http.NewServeMux()
+	// List all challenges (never exposes flags) — powers the scoreboard page.
+	mux.HandleFunc("/api/v1/challenges", func(w http.ResponseWriter, r *http.Request) {
+		type pub struct {
+			Hash  string `json:"hash"`
+			Name  string `json:"name"`
+			Value int    `json:"value"`
+		}
+		list := store.List()
+		out := make([]pub, len(list))
+		for i, c := range list {
+			out[i] = pub{Hash: c.Hash, Name: c.Name, Value: c.Value}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": out})
+	})
+	// Scoreboard: every recorded solve.
+	mux.HandleFunc("/api/v1/scoreboard", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": store.Results()})
+	})
 	mux.HandleFunc("/api/v1/challenges/hash/", func(w http.ResponseWriter, r *http.Request) {
 		m := hashPathRe.FindStringSubmatch(r.URL.Path)
 		if m == nil {

@@ -5,9 +5,12 @@ package server
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/kalw/training-platform/internal/auth"
@@ -17,6 +20,9 @@ import (
 	"github.com/kalw/training-platform/internal/session"
 	"github.com/kalw/training-platform/internal/terminal"
 )
+
+//go:embed scoreboard.html
+var scoreboardPage []byte
 
 // Config controls which surfaces are mounted and how.
 type Config struct {
@@ -35,6 +41,9 @@ type Config struct {
 	ShimNamespace string
 	// Salt is the scoring salt (also used by the lessons build; must match).
 	Salt string
+	// ChallengesFile, if set, seeds the scoring store at boot (JSON produced
+	// by the lessons build). Missing file is logged and ignored.
+	ChallengesFile string
 	// Auth configures social login (GitHub/Google). Zero value = anonymous.
 	Auth auth.Options
 }
@@ -56,9 +65,23 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		userID = mgr.UserID
 	}
 
-	// Scoring API (challenge store seeded elsewhere / via Store()).
-	store := scoring.NewStore(nil)
-	mux.Handle("/api/v1/challenges/", scoring.Handler(store, userID))
+	// Scoring API. Exercise challenges are graded by perceptual hash
+	// (dHash + Hamming) of the submitted screenshot proof. Seed the store
+	// from the lessons build's file if one is configured (idempotent,
+	// stateless-content model).
+	store := scoring.NewStore(scoring.PhashGrader(scoring.DefaultPhashThreshold))
+	if cfg.ChallengesFile != "" {
+		if n, err := store.LoadFile(cfg.ChallengesFile); err != nil {
+			log.Printf("scoring: could not load challenges file %q: %v", cfg.ChallengesFile, err)
+		} else {
+			log.Printf("scoring: loaded %d challenge(s)", n)
+		}
+	}
+	// Mount scoring across the whole /api/v1/ subtree (it owns
+	// /challenges, /challenges/hash/, /challenges/attempt, /scoreboard). The
+	// sessions routes below are registered as more-specific patterns, which
+	// win under Go 1.22+ ServeMux precedence.
+	mux.Handle("/api/v1/", scoring.Handler(store, userID))
 
 	// Session engine + browser terminals.
 	eng, err := session.New(session.Options{
@@ -88,6 +111,49 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		}
 	})
 
+	// Sessions API: boot / tear down an ephemeral instance Pod in the
+	// terminal namespace, so a rendered lesson page (the PWD-SDK equivalent)
+	// can open a live terminal. POST returns {"pod": "...","ip": "..."};
+	// the page then connects to /terminals/{pod}.
+	mux.HandleFunc("/api/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Image string `json:"image"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		inst, err := eng.NewEphemeralInstance(ctx, termNS, body.Image)
+		if err != nil {
+			log.Printf("sessions: create: %v", err)
+			http.Error(w, "could not start session", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"pod": inst.Name, "ip": inst.IP, "image": inst.Image})
+	})
+	mux.HandleFunc("/api/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		pod := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+		if !termPodRe.MatchString(pod) {
+			http.NotFound(w, r)
+			return
+		}
+		_ = eng.DeletePod(r.Context(), termNS, pod)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Scoreboard page: lists all challenges and every recorded solve.
+	mux.HandleFunc("/scoreboard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(scoreboardPage)
+	})
+
 	// Optional Docker-API shim ("play with docker" content).
 	if cfg.EnableShim {
 		shimH, err := dockershim.Handler(cfg.ShimNamespace)
@@ -105,9 +171,17 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 }
 
 var termPathRe = regexp.MustCompile(`^/terminals/([a-z0-9][a-z0-9-]*)$`)
+var termPodRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// RunGC runs the session-namespace garbage collector until ctx is done.
-func RunGC(ctx context.Context, eng *session.Engine, every time.Duration) {
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// RunGC garbage-collects expired session namespaces and expired ephemeral
+// instance Pods in termNS until ctx is done.
+func RunGC(ctx context.Context, eng *session.Engine, termNS string, every time.Duration) {
 	if every <= 0 {
 		every = time.Minute
 	}
@@ -122,6 +196,11 @@ func RunGC(ctx context.Context, eng *session.Engine, every time.Duration) {
 				log.Printf("session GC: %v", err)
 			} else if n > 0 {
 				log.Printf("session GC: reaped %d expired session(s)", n)
+			}
+			if n, err := eng.GCExpiredPods(ctx, termNS); err != nil {
+				log.Printf("pod GC: %v", err)
+			} else if n > 0 {
+				log.Printf("pod GC: reaped %d expired instance pod(s)", n)
 			}
 		}
 	}

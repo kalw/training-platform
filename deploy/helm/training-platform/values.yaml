@@ -55,6 +55,14 @@ resources:
   limits:
     memory: 512Mi
 
+# Extra volumes / mounts on the platform Pod — e.g. mount a ConfigMap of a
+# built lesson site at serve.lessonsDir, and/or a challenges file.
+extraVolumes: []
+extraVolumeMounts: []
+
+# Path to a JSON challenges file (mounted via extraVolumes) to seed scoring.
+challengesFile: ""
+
 # The session Pods this platform creates need to run privileged (nested
 # dockerd for "play with docker"). Pod Security is scoped to the session
 # namespace only, never cluster-wide.

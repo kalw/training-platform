@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -114,6 +115,50 @@ func (s *Store) Solved(challengeHash, userID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.solves[challengeHash][userID]
+}
+
+// List returns every challenge, sorted by name. Copies are returned; callers
+// that expose these to clients must strip Flags (see the HTTP layer).
+func (s *Store) List() []Challenge {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Challenge, 0, len(s.byHash))
+	for _, c := range s.byHash {
+		out = append(out, *c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Solve is one (user, challenge) completion, for the scoreboard.
+type Solve struct {
+	User          string `json:"user"`
+	ChallengeHash string `json:"challenge_hash"`
+	ChallengeName string `json:"challenge_name"`
+	Value         int    `json:"value"`
+}
+
+// Results returns every recorded solve, sorted by user then challenge name.
+func (s *Store) Results() []Solve {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Solve
+	for hash, users := range s.solves {
+		name, value := hash, 0
+		if c, ok := s.byHash[hash]; ok {
+			name, value = c.Name, c.Value
+		}
+		for u := range users {
+			out = append(out, Solve{User: u, ChallengeHash: hash, ChallengeName: name, Value: value})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].User != out[j].User {
+			return out[i].User < out[j].User
+		}
+		return out[i].ChallengeName < out[j].ChallengeName
+	})
+	return out
 }
 
 func isPhashFlag(flag string) bool {

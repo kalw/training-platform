@@ -50,9 +50,14 @@ type execEntry struct {
 }
 
 func newShim() (*shim, error) {
-	cfg, err := clientcmd.BuildConfigFromFlags("", clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename())
+	// In-cluster service account first (the deployed path), else the ambient
+	// kubeconfig (local dev / running the shim off-cluster).
+	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("loading kubeconfig: %w", err)
+		cfg, err = clientcmd.BuildConfigFromFlags("", clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename())
+		if err != nil {
+			return nil, fmt.Errorf("loading kube config (no in-cluster SA, no kubeconfig): %w", err)
+		}
 	}
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

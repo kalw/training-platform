@@ -27,6 +27,54 @@ scoring contract.
 | **Router** | `internal/router` | Exposed-port routing: decodes `ip<A-B-C-D>-<session>...` hosts and proxies to the Pod IP. Runs in-cluster, where Pod IPs are directly routable. |
 | **Lessons** | `internal/lessons` | Serves the pre-rendered static lesson site. |
 | **Auth** | `internal/auth` | Social login (GitHub / Google OAuth2) with a signed session cookie; attributes solves to a real user. Anonymous when unconfigured. |
+| **Content** | `internal/content` | `training build`: renders Markdown lessons (front matter + `{% quiz %}` / `{% exercise %}` blocks) into PWD-compatible HTML **and** imports the challenges. Exercise flags are the perceptual hash (dHash) of the expected result page, rendered headlessly at build time. |
+
+## Authoring lessons (`training build`)
+
+Lessons are Markdown with YAML front matter and two block types:
+
+```markdown
+---
+title: Containers — quiz
+image: busybox:1.36          # boots the session instance for this lesson
+---
+# Listing containers
+
+{% quiz %}
+Which command lists the running containers?
+- [x] docker ps
+- [ ] docker ls
+{% endquiz %}
+```
+
+Exercises declare a reference **result page**; its perceptual hash is computed
+at build time (never hand-written):
+
+```markdown
+---
+image: ghcr.io/kalw/my-broken-nginx:latest   # custom image FROM training-exercises-template
+exercise_result: 03-fix-nginx-result.html    # rendered headlessly, dHashed -> phash flag
+exercise_threshold: 12
+---
+{% exercise %}
+Fix the web server so the status page renders correctly.
+{% endexercise %}
+```
+
+`training build --src examples/lessons --out site --salt "$CTFD_SALT"` renders
+each lesson to `site/<slug>.html`, writes `site/index.html`, and emits
+`site/challenges.json` — the one artifact `serve` seeds scoring from. The
+Markdown→HTML render and the challenge import are the **same pass**, so the
+page DOM and the challenge store can never disagree on a hash. Exercise
+grading needs headless Chrome/Chromium at build time (auto-detected, or
+`CHROME_BIN`); an `exercise_result:` that's a `.png`/`.jpg` is hashed
+directly with no browser.
+
+See [`examples/lessons`](examples/lessons) for a plain, a quiz, and an
+exercise lesson, and [`examples/forge-attempts.sh`](examples/forge-attempts.sh)
+which demonstrates that the scoring channel *verifies* outcomes but doesn't
+*prevent* forgery (a client can POST a correct hash / screenshot directly,
+bypassing the UI — as the design notes).
 
 Everything is wired together by `internal/server` and driven by the
 `cmd/training` CLI.

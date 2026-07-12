@@ -96,9 +96,15 @@ Everything here rests on experiments already run against a `kind` cluster
   present; with none set the platform runs anonymously. Login issues an
   HMAC-signed session cookie, and `Manager.UserID(r)` feeds the scoring
   API's `userIDFunc` hook so solves attribute to a real account.
-- **Perceptual-hash exercise grading** — the store accepts a `phashGrader`
-  func (dHash/Hamming comparison of screenshot proofs); the comparator
-  itself is pluggable and not yet ported.
+- **Perceptual-hash exercise grading** — implemented in
+  `internal/scoring/phash.go`: a 64-bit dHash (grayscale, 9×8, adjacent-column
+  compare) with Hamming-distance matching against a `phash$<hex>[:threshold]`
+  flag. Exercise captures arrive as data-URL JPEG/PNG; the reference flag is
+  computed at **build time** (`training build`) by rendering the expected
+  result page with headless Chrome at 1024×768 and dHashing it (the
+  `exercise_result:` front-matter key selects the page; `.png`/`.jpg`
+  references skip the browser). This is the Go equivalent of the legacy
+  chromium step in `exportChallenges.sh`.
 - **Persistent scoring store** — challenges are in-memory, seeded at boot
   from the challenges file (idempotent, stateless-content model). A durable
   solve log (for leaderboards across restarts) would back `Store` with a DB.

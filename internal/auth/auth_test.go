@@ -16,6 +16,26 @@ func TestNoProvidersIsAnonymousMode(t *testing.T) {
 	}
 }
 
+// Regression: anonymous mode (no providers AND no secret) must succeed —
+// the secret is only required once a provider is enabled. An earlier version
+// checked the secret first and crash-looped every anonymous deployment.
+func TestNoProvidersNoSecretIsAnonymous(t *testing.T) {
+	m, err := New(Options{})
+	if err != nil {
+		t.Fatalf("anonymous mode should not error, got %v", err)
+	}
+	if m != nil {
+		t.Fatal("expected nil Manager with no providers and no secret")
+	}
+}
+
+func TestProviderWithoutSecretErrors(t *testing.T) {
+	_, err := New(Options{GitHubClientID: "id", GitHubClientSecret: "sec"})
+	if err == nil {
+		t.Fatal("expected an error when a provider is set but Secret is empty")
+	}
+}
+
 func TestCookieSignRoundTripAndTamperReject(t *testing.T) {
 	m := &Manager{secret: []byte("topsecret")}
 	signed := m.sign("github:alice")

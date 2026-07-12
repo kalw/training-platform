@@ -21,6 +21,12 @@ spec:
       serviceAccountName: {{ include "training-platform.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        # distroless:nonroot is UID 65532; a numeric UID is required so the
+        # kubelet can verify non-root (the image's "nonroot" name isn't numeric).
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: training
           image: {{ include "training-platform.image" . | quote }}
@@ -39,6 +45,9 @@ spec:
             {{- end }}
             {{- if .Values.serve.baseURL }}
             - --base-url={{ .Values.serve.baseURL }}
+            {{- end }}
+            {{- if .Values.challengesFile }}
+            - --challenges-file={{ .Values.challengesFile }}
             {{- end }}
           env:
             {{- if .Values.serve.salt }}
@@ -83,6 +92,14 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
