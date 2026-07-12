@@ -1,0 +1,209 @@
+// Package session is the Kubernetes-native session engine: it provisions
+// disposable learner sandboxes directly through the Kubernetes API (no
+// Docker, no Swarm). A session is a labelled Namespace; each instance in it
+// is a privileged Pod (a DinD image, so learners can run `docker` inside).
+//
+// This is the native counterpart to the Docker-API shim: the shim exists so
+// unmodified Docker tooling keeps working, whereas this package is what a
+// k8s-native console uses directly. Both back onto the same primitives
+// (Pods, pods/exec, pods/attach) proven in K8S-SANDBOX-DESIGN.md.
+package session
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+const (
+	managedByLabel  = "app.kubernetes.io/managed-by"
+	managedByValue  = "training-platform"
+	sessionIDLabel  = "training.kalw/session-id"
+	expiresAtLabel  = "training.kalw/expires-at" // unix seconds, for GC
+	instancePodName = "instance"
+)
+
+// Engine provisions and tears down sessions against a cluster.
+type Engine struct {
+	cs      kubernetes.Interface
+	cfg     *rest.Config
+	nsPfx   string        // namespace prefix, e.g. "session-"
+	ttl     time.Duration // default session lifetime
+	dindImg string        // default instance image
+}
+
+// Options configures an Engine.
+type Options struct {
+	// NamespacePrefix is prepended to session IDs to form namespace names.
+	NamespacePrefix string
+	// TTL is the default session lifetime (GC deletes expired namespaces).
+	TTL time.Duration
+	// DefaultImage is the instance image when a session doesn't specify one.
+	DefaultImage string
+}
+
+// New builds an Engine from the ambient kube config (in-cluster service
+// account if present, else the default kubeconfig).
+func New(opts Options) (*Engine, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		cfg, err = clientcmd.BuildConfigFromFlags("", clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename())
+		if err != nil {
+			return nil, fmt.Errorf("loading kube config: %w", err)
+		}
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("building clientset: %w", err)
+	}
+	if opts.NamespacePrefix == "" {
+		opts.NamespacePrefix = "session-"
+	}
+	if opts.TTL == 0 {
+		opts.TTL = 4 * time.Hour
+	}
+	if opts.DefaultImage == "" {
+		opts.DefaultImage = "ghcr.io/kalw/training-console-pwd:dind"
+	}
+	return &Engine{cs: cs, cfg: cfg, nsPfx: opts.NamespacePrefix, ttl: opts.TTL, dindImg: opts.DefaultImage}, nil
+}
+
+// RESTConfig exposes the cluster config so callers (e.g. the terminal
+// package) can open exec/attach streams against instances this Engine owns.
+func (e *Engine) RESTConfig() *rest.Config { return e.cfg }
+
+// NamespaceFor returns the namespace name backing a session id.
+func (e *Engine) NamespaceFor(sessionID string) string { return e.nsPfx + sessionID }
+
+// SessionNew creates the namespace backing a session, labelled for GC.
+func (e *Engine) SessionNew(ctx context.Context, sessionID string) error {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: e.NamespaceFor(sessionID),
+			Labels: map[string]string{
+				managedByLabel: managedByValue,
+				sessionIDLabel: sessionID,
+				expiresAtLabel: fmt.Sprintf("%d", time.Now().Add(e.ttl).Unix()),
+			},
+		},
+	}
+	_, err := e.cs.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("creating session namespace: %w", err)
+	}
+	return nil
+}
+
+// SessionClose deletes a session's namespace (cascading: instances go too).
+func (e *Engine) SessionClose(ctx context.Context, sessionID string) error {
+	err := e.cs.CoreV1().Namespaces().Delete(ctx, e.NamespaceFor(sessionID), metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// Instance is a running sandbox Pod.
+type Instance struct {
+	Name      string
+	SessionID string
+	IP        string
+	Image     string
+}
+
+// InstanceNew creates a privileged instance Pod in the session namespace and
+// waits (up to ctx's deadline) for it to get a Pod IP. image may be empty to
+// use the engine default.
+func (e *Engine) InstanceNew(ctx context.Context, sessionID, name, image string) (*Instance, error) {
+	if image == "" {
+		image = e.dindImg
+	}
+	ns := e.NamespaceFor(sessionID)
+	priv := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels:    map[string]string{managedByLabel: managedByValue, sessionIDLabel: sessionID},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{
+				Name:            instancePodName,
+				Image:           image,
+				TTY:             true,
+				Stdin:           true,
+				SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+			}},
+		},
+	}
+	if _, err := e.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return nil, fmt.Errorf("creating instance pod: %w", err)
+	}
+
+	ip, err := e.waitForIP(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	return &Instance{Name: name, SessionID: sessionID, IP: ip, Image: image}, nil
+}
+
+// InstanceDelete removes an instance Pod.
+func (e *Engine) InstanceDelete(ctx context.Context, sessionID, name string) error {
+	grace := int64(0)
+	err := e.cs.CoreV1().Pods(e.NamespaceFor(sessionID)).Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: &grace})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func (e *Engine) waitForIP(ctx context.Context, ns, name string) (string, error) {
+	for {
+		pod, err := e.cs.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		if pod.Status.PodIP != "" {
+			return pod.Status.PodIP, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// GCExpired deletes every managed session namespace whose expires-at label is
+// in the past. Intended to be called periodically (Kubernetes has no
+// built-in namespace TTL). Returns the number of namespaces deleted.
+func (e *Engine) GCExpired(ctx context.Context) (int, error) {
+	list, err := e.cs.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: managedByLabel + "=" + managedByValue,
+	})
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	deleted := 0
+	for i := range list.Items {
+		ns := &list.Items[i]
+		exp := ns.Labels[expiresAtLabel]
+		var expUnix int64
+		_, _ = fmt.Sscanf(exp, "%d", &expUnix)
+		if expUnix != 0 && expUnix < now {
+			if err := e.cs.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{}); err == nil {
+				deleted++
+			}
+		}
+	}
+	return deleted, nil
+}

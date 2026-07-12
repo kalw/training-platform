@@ -1,0 +1,9 @@
+apiVersion: v2
+name: training-platform
+description: All-in-one training platform (lessons, scoring, terminals, Docker-API shim) as a single Kubernetes-native binary.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/kalw/training-platform
+sources:
+  - https://github.com/kalw/training-platform

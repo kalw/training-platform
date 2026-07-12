@@ -1,0 +1,58 @@
+# Default values for training-platform.
+
+image:
+  repository: ghcr.io/kalw/training-platform
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Namespace where learner session Pods (and the Docker-shim's containers)
+# are created. The platform's ServiceAccount is granted rights over Pods
+# and pods/exec here. Sessions are labelled and GC'd by TTL.
+sessionNamespace: training-sessions
+
+# Command-line flags for `training serve` (see cmd/training/main.go).
+serve:
+  lessonsDir: ""                                   # empty serves a placeholder; mount built lessons here
+  sessionNamespacePrefix: "session-"
+  sessionTTL: "4h"
+  instanceImage: "ghcr.io/kalw/training-console-pwd:dind"
+  enableShim: true                                 # keep Docker-in-course working
+  salt: ""                                         # scoring salt; must match the lessons build
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: training.example.com
+  tls: false
+  # The exposed-port router needs a wildcard host (*.direct.<domain>) to
+  # reach session instances; enable and point it at the same Service.
+  wildcardHost: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# The session Pods this platform creates need to run privileged (nested
+# dockerd for "play with docker"). Pod Security is scoped to the session
+# namespace only, never cluster-wide.
+sessionPodSecurity:
+  enforce: privileged
+
+serviceAccount:
+  create: true
+  name: ""
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

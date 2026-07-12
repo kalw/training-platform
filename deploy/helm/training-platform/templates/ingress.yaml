@@ -1,0 +1,50 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "training-platform.fullname" . }}
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+        {{- if .Values.ingress.wildcardHost }}
+        - {{ .Values.ingress.wildcardHost | quote }}
+        {{- end }}
+      secretName: {{ include "training-platform.fullname" . }}-tls
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "training-platform.fullname" . }}
+                port:
+                  name: http
+    {{- if .Values.ingress.wildcardHost }}
+    # Exposed-port router: *.direct.<domain> reaches session instances via
+    # the same Service (the in-cluster router dials Pod IPs directly).
+    - host: {{ .Values.ingress.wildcardHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "training-platform.fullname" . }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

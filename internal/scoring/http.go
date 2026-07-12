@@ -1,0 +1,80 @@
+package scoring
+
+import (
+	"encoding/json"
+	"net/http"
+	"regexp"
+)
+
+// Handler exposes the scoring API. It mirrors the two endpoints the lessons
+// JS relies on (historically served by the patched CTFd fork), so quiz.js /
+// exercise-verify.js can talk to it unchanged in shape:
+//
+//	GET  /api/v1/challenges/hash/{hash} -> resolve a challenge by its hash
+//	POST /api/v1/challenges/attempt     -> submit a (pre-hashed) answer
+//
+// userIDFunc extracts the current user id from a request (e.g. from an OIDC
+// session cookie); pass a func returning a constant for anonymous/dev use.
+func Handler(store *Store, userIDFunc func(*http.Request) string) http.Handler {
+	if userIDFunc == nil {
+		userIDFunc = func(*http.Request) string { return "anonymous" }
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/challenges/hash/", func(w http.ResponseWriter, r *http.Request) {
+		m := hashPathRe.FindStringSubmatch(r.URL.Path)
+		if m == nil {
+			http.NotFound(w, r)
+			return
+		}
+		c, ok := store.Get(m[1])
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false})
+			return
+		}
+		// Never disclose flags to the client.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"data":    map[string]any{"hash": c.Hash, "name": c.Name, "value": c.Value},
+		})
+	})
+	mux.HandleFunc("/api/v1/challenges/attempt", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req attemptRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false})
+			return
+		}
+		correct, known := store.Grade(req.ChallengeHash, req.Submission, userIDFunc(r))
+		if !known {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false})
+			return
+		}
+		status := "incorrect"
+		if correct {
+			status = "correct"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"data":    map[string]any{"status": status},
+		})
+	})
+	return mux
+}
+
+var hashPathRe = regexp.MustCompile(`^/api/v1/challenges/hash/([0-9a-fA-F]+)$`)
+
+type attemptRequest struct {
+	ChallengeHash string `json:"challenge_hash"`
+	// Submission is the salted answer hash for quizzes, or a capture for
+	// exercises — never a plaintext answer.
+	Submission string `json:"submission"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}

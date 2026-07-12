@@ -1,0 +1,40 @@
+# goreleaser builds the release artifacts on a tag (see .github/workflows
+# ci.yml's "release" job). Multi-OS, multi-arch, pure-Go static binaries.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: training
+    main: ./cmd/training
+    binary: training
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/kalw/training-platform/internal/version.Version={{.Version}}
+      - -X github.com/kalw/training-platform/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/kalw/training-platform/internal/version.Date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:"]
+
+release:
+  prerelease: auto

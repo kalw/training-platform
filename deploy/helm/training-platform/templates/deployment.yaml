@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "training-platform.fullname" . }}
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "training-platform.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "training-platform.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "training-platform.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: training
+          image: {{ include "training-platform.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --addr=:{{ .Values.service.port }}
+            - --session-namespace-prefix={{ .Values.serve.sessionNamespacePrefix }}
+            - --session-ttl={{ .Values.serve.sessionTTL }}
+            - --instance-image={{ .Values.serve.instanceImage }}
+            - --terminal-namespace={{ .Values.sessionNamespace }}
+            - --shim-namespace={{ .Values.sessionNamespace }}
+            - --enable-shim={{ .Values.serve.enableShim }}
+            {{- if .Values.serve.lessonsDir }}
+            - --lessons-dir={{ .Values.serve.lessonsDir }}
+            {{- end }}
+          env:
+            {{- if .Values.serve.salt }}
+            - name: CTFD_SALT
+              value: {{ .Values.serve.salt | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

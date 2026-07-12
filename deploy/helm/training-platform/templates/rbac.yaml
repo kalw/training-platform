@@ -1,0 +1,87 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "training-platform.serviceAccountName" . }}
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+{{- end }}
+---
+# The session namespace (learner sandboxes / shim containers land here).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.sessionNamespace }}
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+    {{- if .Values.sessionPodSecurity.enforce }}
+    # Privileged workloads (nested dockerd for "play with docker") are
+    # allowed ONLY in this namespace, never cluster-wide.
+    pod-security.kubernetes.io/enforce: {{ .Values.sessionPodSecurity.enforce }}
+    {{- end }}
+---
+# Cluster-scoped: the platform creates/deletes session Namespaces and GCs
+# them by TTL, so it needs namespace verbs at cluster scope.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "training-platform.fullname" . }}-namespaces
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "training-platform.fullname" . }}-namespaces
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "training-platform.fullname" . }}-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "training-platform.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Namespaced: within the session namespace the platform manages instance
+# Pods and opens exec/attach/log streams. Scoped tightly (no secrets, no
+# cluster-wide pod access) — the sensitive privilege lives here, not on the
+# workload itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "training-platform.fullname" . }}-sessions
+  namespace: {{ .Values.sessionNamespace }}
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/attach"]
+    verbs: ["create", "get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "training-platform.fullname" . }}-sessions
+  namespace: {{ .Values.sessionNamespace }}
+  labels:
+    {{- include "training-platform.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "training-platform.fullname" . }}-sessions
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "training-platform.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
