@@ -99,30 +99,34 @@ document.getElementById('boot').onclick = async () => {
   };
 };
 
-// --- Quiz: submit the selected choice's pre-salted hash; graded server-side. ---
+// --- Quiz: submit the selected choice's pre-salted hash. Grading happens
+// server-side; the page only confirms the answer was *submitted* — it never
+// reveals correct/incorrect (that would leak which choice is right, since
+// each choice's hash is in the DOM). See the scoreboard for outcomes. ---
 document.querySelectorAll('.quiz').forEach(q=>{
   const btn=q.querySelector('.quiz-submit'), v=q.querySelector('.verdict');
   btn.onclick=async()=>{
     const sel=q.querySelector('input[type=radio]:checked');
-    if(!sel){ v.textContent='pick an answer'; return; }
-    const r=await fetch('/api/v1/challenges/attempt',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({challenge_hash:q.dataset.challenge, submission:sel.dataset.flag})});
-    const j=await r.json(); const st=(j.data&&j.data.status)||'error';
-    q.querySelectorAll('label').forEach(l=>l.classList.remove('correct','wrong'));
-    const lab=sel.closest('label');
-    if(st==='correct'){ v.textContent='✓ correct'; v.style.color='var(--ok)'; lab.classList.add('correct'); }
-    else if(st==='incorrect'){ v.textContent='✗ incorrect'; v.style.color='var(--bad)'; lab.classList.add('wrong'); }
-    else { v.textContent='challenge not found'; }
+    if(!sel){ v.textContent='pick an answer'; v.style.color='var(--muted)'; return; }
+    v.textContent='submitting…'; v.style.color='var(--muted)';
+    try{
+      const r=await fetch('/api/v1/challenges/attempt',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({challenge_hash:q.dataset.challenge, submission:sel.dataset.flag})});
+      const j=await r.json();
+      if(j&&j.success){ v.textContent='✓ answer submitted'; v.style.color='var(--ok)'; }
+      else { v.textContent='could not submit'; v.style.color='var(--bad)'; }
+    }catch(e){ v.textContent='could not submit'; v.style.color='var(--bad)'; }
   };
 });
 
 // --- Exercise: the "Test Exercise" link opens the result page carrying the
-// hash_code the verify script submits its screenshot proof with. ---
+// hash_code the verify script submits its screenshot proof with. Like the
+// quiz, the page only confirms submission, never the phash verdict. ---
 document.querySelectorAll('.exercise-demo').forEach(a=>{
   a.addEventListener('click',(e)=>{
     e.preventDefault();
     const v=a.parentElement.querySelector('.verdict');
-    v.textContent='opens the exercise result page with ?hash_code='+a.dataset.hashCode.slice(0,12)+'… (screenshot proof → phash grading)';
+    v.textContent='opens the exercise result page (screenshot proof submitted for grading)';
     v.style.color='var(--muted)';
   });
 });

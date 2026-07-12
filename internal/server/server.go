@@ -83,24 +83,38 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 	// win under Go 1.22+ ServeMux precedence.
 	mux.Handle("/api/v1/", scoring.Handler(store, userID))
 
-	// Session engine + browser terminals.
+	termNS := cfg.TerminalNamespace
+	if termNS == "" {
+		termNS = "training-sessions"
+	}
+
+	// Session engine + browser terminals. If no cluster is reachable (no
+	// in-cluster SA and no kubeconfig), the platform still serves lessons,
+	// scoring and the scoreboard — only the terminal/session endpoints go
+	// dark (503). This keeps `serve` usable for content authoring and CI
+	// (e.g. Playwright) without a Kubernetes cluster.
 	eng, err := session.New(session.Options{
 		NamespacePrefix: cfg.SessionNamespacePrefix,
 		TTL:             cfg.SessionTTL,
 		DefaultImage:    cfg.DefaultInstanceImage,
 	})
 	if err != nil {
-		return nil, nil, err
+		log.Printf("sessions/terminals disabled: no Kubernetes cluster available: %v", err)
+		eng = nil
 	}
-	termNS := cfg.TerminalNamespace
-	if termNS == "" {
-		termNS = "training-sessions"
-	}
-	bridge, err := terminal.New(eng.RESTConfig(), termNS, "instance", nil)
-	if err != nil {
-		return nil, nil, err
+
+	var bridge *terminal.Bridge
+	if eng != nil {
+		bridge, err = terminal.New(eng.RESTConfig(), termNS, "instance", nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	mux.HandleFunc("/terminals/", func(w http.ResponseWriter, r *http.Request) {
+		if bridge == nil {
+			http.Error(w, "sessions unavailable (no cluster)", http.StatusServiceUnavailable)
+			return
+		}
 		m := termPathRe.FindStringSubmatch(r.URL.Path)
 		if m == nil {
 			http.NotFound(w, r)
@@ -116,6 +130,10 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 	// can open a live terminal. POST returns {"pod": "...","ip": "..."};
 	// the page then connects to /terminals/{pod}.
 	mux.HandleFunc("/api/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		if eng == nil {
+			http.Error(w, "sessions unavailable (no cluster)", http.StatusServiceUnavailable)
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -135,6 +153,10 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		writeJSON(w, http.StatusCreated, map[string]any{"pod": inst.Name, "ip": inst.IP, "image": inst.Image})
 	})
 	mux.HandleFunc("/api/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		if eng == nil {
+			http.Error(w, "sessions unavailable (no cluster)", http.StatusServiceUnavailable)
+			return
+		}
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -154,13 +176,14 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		_, _ = w.Write(scoreboardPage)
 	})
 
-	// Optional Docker-API shim ("play with docker" content).
+	// Optional Docker-API shim ("play with docker" content). Also degrades
+	// gracefully without a cluster.
 	if cfg.EnableShim {
-		shimH, err := dockershim.Handler(cfg.ShimNamespace)
-		if err != nil {
-			return nil, nil, err
+		if shimH, err := dockershim.Handler(cfg.ShimNamespace); err != nil {
+			log.Printf("docker shim disabled: no Kubernetes cluster available: %v", err)
+		} else {
+			mux.Handle("/docker/", http.StripPrefix("/docker", shimH))
 		}
-		mux.Handle("/docker/", http.StripPrefix("/docker", shimH))
 	}
 
 	// Health + lessons (lessons last: it's the catch-all root).
@@ -182,6 +205,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // RunGC garbage-collects expired session namespaces and expired ephemeral
 // instance Pods in termNS until ctx is done.
 func RunGC(ctx context.Context, eng *session.Engine, termNS string, every time.Duration) {
+	if eng == nil {
+		return // no cluster; nothing to GC
+	}
 	if every <= 0 {
 		every = time.Minute
 	}

@@ -110,6 +110,10 @@ func (p *PhashResolver) renderHTML(htmlPath string) (image.Image, error) {
 	defer os.RemoveAll(tmpProfile)
 	cmd := exec.Command(p.chrome,
 		"--headless=new", "--disable-gpu", "--no-sandbox",
+		// --disable-dev-shm-usage: containers give /dev/shm only 64MB by
+		// default, which makes Chrome hang/crash mid-render (the screenshot
+		// never lands). Writing shared memory to /tmp instead fixes it.
+		"--disable-dev-shm-usage", "--disable-software-rasterizer",
 		"--no-first-run", "--no-default-browser-check", "--disable-extensions",
 		"--hide-scrollbars", "--force-device-scale-factor=1",
 		"--window-size=1024,768", "--virtual-time-budget=3000",

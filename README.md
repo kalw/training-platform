@@ -71,10 +71,12 @@ grading needs headless Chrome/Chromium at build time (auto-detected, or
 directly with no browser.
 
 See [`examples/lessons`](examples/lessons) for a plain, a quiz, and an
-exercise lesson, and [`examples/forge-attempts.sh`](examples/forge-attempts.sh)
-which demonstrates that the scoring channel *verifies* outcomes but doesn't
-*prevent* forgery (a client can POST a correct hash / screenshot directly,
-bypassing the UI — as the design notes).
+exercise lesson. The quiz/exercise pages only ever confirm that an answer was
+*submitted* — never whether it was correct — so the UI can't be used to
+brute-force the answer (each choice's hash is in the DOM); outcomes live on
+the `/scoreboard`. The [Playwright suite](e2e) proves this, and demonstrates
+that the scoring channel *verifies* outcomes but doesn't *prevent* forgery
+(a client can POST a correct hash / screenshot directly, bypassing the UI).
 
 Everything is wired together by `internal/server` and driven by the
 `cmd/training` CLI.
@@ -106,9 +108,88 @@ make image           # multi-arch container (needs buildx)
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs vet + race
 tests + a gofmt check, cross-compiles the full OS/arch matrix on every push
-and PR, builds a multi-arch (`linux/amd64,linux/arm64`) image to GHCR on
-`main`/tags, and cuts a goreleaser release (binaries for all targets +
-checksums) on `v*` tags.
+and PR, runs the Playwright e2e suite in Docker, builds a multi-arch
+(`linux/amd64,linux/arm64`) image to GHCR on `main`/tags, and cuts a
+goreleaser release (binaries for all targets + checksums) on `v*` tags.
+
+## Testing
+
+```sh
+make test                              # Go: vet + race unit/integration tests
+docker build -f e2e/Dockerfile -t training-e2e . && docker run --rm training-e2e
+```
+
+The end-to-end tests are [Playwright](e2e) and run **fully self-contained in
+Docker** — no local Node or Chrome needed, no Kubernetes cluster required.
+They cover the lesson UI (Markdown rendering), the quiz submitted-only
+behaviour, forged API calls (correct quiz hash / exercise screenshot posted
+directly), and the scoreboard. The terminal spec is cluster-gated: run it
+against a real cluster with `E2E_CLUSTER=1` (see below).
+
+## Run locally on kind or k3s
+
+The platform deploys only on Kubernetes; any conformant cluster works. Two
+zero-cost local options:
+
+### kind
+
+```sh
+kind create cluster --name training
+
+# build the image and load it into the cluster (no registry needed)
+docker build -t training-platform:dev .
+kind load docker-image training-platform:dev --name training
+
+helm install training deploy/helm/training-platform \
+  --namespace training --create-namespace \
+  --set image.repository=training-platform --set image.tag=dev \
+  --set image.pullPolicy=IfNotPresent \
+  --set serve.salt=demo-salt
+
+kubectl -n training port-forward svc/training 8080:8080
+# open http://localhost:8080
+```
+
+To serve real lessons, render them and mount the output as a ConfigMap:
+
+```sh
+docker run --rm -v "$PWD:/w" -w /w training-platform:dev \
+  build --src examples/lessons --out /w/site --salt demo-salt   # or: make build && ./bin/training build ...
+kubectl -n training create configmap lessons --from-file=site/
+helm upgrade training deploy/helm/training-platform -n training --reuse-values \
+  --set serve.lessonsDir=/lessons --set challengesFile=/lessons/challenges.json \
+  --set 'extraVolumes[0].name=lessons' \
+  --set 'extraVolumes[0].configMap.name=lessons' \
+  --set 'extraVolumeMounts[0].name=lessons' \
+  --set 'extraVolumeMounts[0].mountPath=/lessons' \
+  --set 'extraVolumeMounts[0].readOnly=true'
+```
+
+### k3s
+
+```sh
+curl -sfL https://get.k3s.io | sh -      # single-node k3s
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml   # (sudo chmod +r it, or copy to ~/.kube/config)
+
+# k3s uses containerd, not Docker — import the image straight into it
+docker build -t training-platform:dev .
+docker save training-platform:dev | sudo k3s ctr images import -
+
+helm install training deploy/helm/training-platform \
+  --namespace training --create-namespace \
+  --set image.repository=training-platform --set image.tag=dev \
+  --set image.pullPolicy=IfNotPresent \
+  --set serve.salt=demo-salt
+# k3s ships Traefik; set ingress.enabled=true + ingress.host to expose it,
+# or port-forward as above.
+```
+
+Both give the platform a Service account with the least-privilege RBAC the
+chart defines, and a `training-sessions` namespace where privileged DinD
+session Pods are allowed (Pod Security scoped to that namespace only). Point
+the cluster-gated Playwright terminal test at either with
+`E2E_CLUSTER=1 E2E_PORT=8080 npx playwright test tests/terminal.spec.ts`
+(from `e2e/`, against a running `port-forward`).
 
 ## Deploy (Kubernetes only)
 

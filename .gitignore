@@ -4,3 +4,6 @@
 *.test
 *.out
 .DS_Store
+
+# e2e: host-built binary for the prebuilt local image (canonical image builds its own)
+e2e/bin/

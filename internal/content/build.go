@@ -46,6 +46,11 @@ func BuildDirWithResolver(srcDir, outDir, salt string, resolver ExerciseResolver
 		}
 		name := e.Name()
 		if !strings.HasSuffix(name, ".md") && !strings.HasSuffix(name, ".markdown") {
+			// Copy non-lesson assets (result pages, images, css) through so
+			// they're served alongside the rendered lessons.
+			if b, rerr := os.ReadFile(filepath.Join(srcDir, name)); rerr == nil {
+				_ = os.WriteFile(filepath.Join(outDir, name), b, 0o644)
+			}
 			continue
 		}
 		src, err := os.ReadFile(filepath.Join(srcDir, name))

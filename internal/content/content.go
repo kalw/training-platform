@@ -76,27 +76,42 @@ func Render(slug string, src []byte, salt string, resolver ExerciseResolver) (*L
 
 	// Extract quiz/exercise blocks, replacing each with an HTML placeholder
 	// that survives Markdown rendering, then render the remaining Markdown.
+	// A block error aborts the whole render — a lesson that can't produce its
+	// challenge (e.g. the exercise phash can't be computed) must fail the
+	// build loudly, never ship silently with a missing challenge.
 	var placeholders []string
+	var blockErr error
 	body = quizRe.ReplaceAllStringFunc(body, func(m string) string {
+		if blockErr != nil {
+			return ""
+		}
 		inner := quizRe.FindStringSubmatch(m)[1]
 		htmlBlock, ch, err := l.renderQuiz(slug, inner, salt)
 		if err != nil {
-			return "<!-- quiz error: " + err.Error() + " -->"
+			blockErr = fmt.Errorf("quiz: %w", err)
+			return ""
 		}
 		l.Challenges = append(l.Challenges, ch)
 		placeholders = append(placeholders, htmlBlock)
 		return "\n" + placeholderToken(len(placeholders)-1) + "\n"
 	})
 	body = exerciseRe.ReplaceAllStringFunc(body, func(m string) string {
+		if blockErr != nil {
+			return ""
+		}
 		inner := exerciseRe.FindStringSubmatch(m)[1]
 		htmlBlock, ch, err := l.renderExercise(slug, inner, resolver)
 		if err != nil {
-			return "<!-- exercise error: " + err.Error() + " -->"
+			blockErr = fmt.Errorf("exercise: %w", err)
+			return ""
 		}
 		l.Challenges = append(l.Challenges, ch)
 		placeholders = append(placeholders, htmlBlock)
 		return "\n" + placeholderToken(len(placeholders)-1) + "\n"
 	})
+	if blockErr != nil {
+		return nil, blockErr
+	}
 
 	rendered := renderMarkdown(body)
 	for i, ph := range placeholders {

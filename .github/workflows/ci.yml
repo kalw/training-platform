@@ -61,6 +61,19 @@ jobs:
           name: training-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
+  # Playwright end-to-end: UI, scoring, forged API calls and the scoreboard,
+  # run fully self-contained in Docker (no local Node/Chrome, no cluster —
+  # the terminal spec is cluster-gated and skips here).
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build e2e image
+        run: docker build -f e2e/Dockerfile -t training-e2e .
+      - name: run e2e
+        run: docker run --rm training-e2e
+
   # Multi-arch container image. Pushes to GHCR only on main/tags (not PRs).
   image:
     needs: test

@@ -1,11 +1,13 @@
 ---
 title: Fix the broken web server — exercise
 image: ghcr.io/kalw/my-broken-nginx:latest
-# The reference flag is computed at build time by rendering this result page
-# headlessly and perceptual-hashing it. Omit exercise_result to use the
-# built-in default result page.
-exercise_result: 03-fix-nginx-result.html
-exercise_threshold: 12
+# The reference flag is computed at build time by perceptual-hashing the
+# expected result. exercise_result can be a rendered image (.png/.jpg —
+# hashed directly, no browser, CI-friendly) or an .html page (rendered
+# headlessly with Chrome, for dev machines). Here we use the pre-rendered
+# image so the build is deterministic and browser-free.
+exercise_result: 03-fix-nginx-result.png
+exercise_threshold: 20
 ---
 
 # Fix the broken web server
