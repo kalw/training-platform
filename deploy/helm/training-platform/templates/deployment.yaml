@@ -37,10 +37,31 @@ spec:
             {{- if .Values.serve.lessonsDir }}
             - --lessons-dir={{ .Values.serve.lessonsDir }}
             {{- end }}
+            {{- if .Values.serve.baseURL }}
+            - --base-url={{ .Values.serve.baseURL }}
+            {{- end }}
           env:
             {{- if .Values.serve.salt }}
             - name: CTFD_SALT
               value: {{ .Values.serve.salt | quote }}
+            {{- end }}
+            {{- if .Values.auth.secret }}
+            - name: AUTH_SECRET
+              value: {{ .Values.auth.secret | quote }}
+            {{- end }}
+            - name: AUTH_COOKIE_SECURE
+              value: {{ .Values.auth.cookieSecure | quote }}
+            {{- if .Values.auth.github.clientID }}
+            - name: GITHUB_CLIENT_ID
+              value: {{ .Values.auth.github.clientID | quote }}
+            - name: GITHUB_CLIENT_SECRET
+              value: {{ .Values.auth.github.clientSecret | quote }}
+            {{- end }}
+            {{- if .Values.auth.google.clientID }}
+            - name: GOOGLE_CLIENT_ID
+              value: {{ .Values.auth.google.clientID | quote }}
+            - name: GOOGLE_CLIENT_SECRET
+              value: {{ .Values.auth.google.clientSecret | quote }}
             {{- end }}
           ports:
             - name: http

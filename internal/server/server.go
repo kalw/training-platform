@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/kalw/training-platform/internal/auth"
 	"github.com/kalw/training-platform/internal/dockershim"
 	"github.com/kalw/training-platform/internal/lessons"
 	"github.com/kalw/training-platform/internal/scoring"
@@ -34,6 +35,8 @@ type Config struct {
 	ShimNamespace string
 	// Salt is the scoring salt (also used by the lessons build; must match).
 	Salt string
+	// Auth configures social login (GitHub/Google). Zero value = anonymous.
+	Auth auth.Options
 }
 
 // New builds the composed handler. It also returns the session Engine (for a
@@ -41,9 +44,21 @@ type Config struct {
 func New(cfg Config) (http.Handler, *session.Engine, error) {
 	mux := http.NewServeMux()
 
+	// Social login (GitHub/Google). When unconfigured, mgr is nil and every
+	// user is "anonymous" — the platform still runs.
+	var userID func(*http.Request) string
+	mgr, err := auth.New(cfg.Auth)
+	if err != nil {
+		return nil, nil, err
+	}
+	if mgr != nil {
+		mux.Handle("/auth/", mgr.Handler())
+		userID = mgr.UserID
+	}
+
 	// Scoring API (challenge store seeded elsewhere / via Store()).
 	store := scoring.NewStore(nil)
-	mux.Handle("/api/v1/challenges/", scoring.Handler(store, nil))
+	mux.Handle("/api/v1/challenges/", scoring.Handler(store, userID))
 
 	// Session engine + browser terminals.
 	eng, err := session.New(session.Options{

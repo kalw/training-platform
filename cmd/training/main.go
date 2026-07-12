@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kalw/training-platform/internal/auth"
 	"github.com/kalw/training-platform/internal/dockershim"
 	"github.com/kalw/training-platform/internal/router"
 	"github.com/kalw/training-platform/internal/server"
@@ -81,6 +82,7 @@ func cmdServe(args []string) {
 	enableShim := fs.Bool("enable-shim", envBool("ENABLE_SHIM", true), "mount the Docker-API shim under /docker/")
 	shimNS := fs.String("shim-namespace", envOr("SHIM_NS", "training-sessions"), "namespace the Docker shim materializes containers into")
 	salt := fs.String("salt", os.Getenv("CTFD_SALT"), "scoring salt (must match the lessons build)")
+	baseURL := fs.String("base-url", envOr("BASE_URL", ""), "external origin, for social-login redirect URLs")
 	_ = fs.Parse(args)
 
 	h, eng, err := server.New(server.Config{
@@ -92,6 +94,17 @@ func cmdServe(args []string) {
 		EnableShim:             *enableShim,
 		ShimNamespace:          *shimNS,
 		Salt:                   *salt,
+		// Social login: providers enable themselves when their client
+		// id/secret env vars are present. See internal/auth.
+		Auth: auth.Options{
+			BaseURL:            *baseURL,
+			Secret:             os.Getenv("AUTH_SECRET"),
+			Secure:             envBool("AUTH_COOKIE_SECURE", true),
+			GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
+			GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+			GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+			GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		},
 	})
 	if err != nil {
 		log.Fatalf("serve: %v", err)

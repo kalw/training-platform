@@ -20,6 +20,19 @@ serve:
   instanceImage: "ghcr.io/kalw/training-console-pwd:dind"
   enableShim: true                                 # keep Docker-in-course working
   salt: ""                                         # scoring salt; must match the lessons build
+  baseURL: ""                                      # external origin, for social-login redirect URLs
+
+# Social login (GitHub / Google OAuth2). A provider turns on when its
+# client id + secret are both set. Leave all empty for anonymous mode.
+auth:
+  secret: ""                                       # signs session cookies; keep stable across replicas
+  cookieSecure: true                               # set false only for plain-HTTP local testing
+  github:
+    clientID: ""
+    clientSecret: ""
+  google:
+    clientID: ""
+    clientSecret: ""
 
 service:
   type: ClusterIP

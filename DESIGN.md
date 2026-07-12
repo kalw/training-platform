@@ -90,9 +90,12 @@ Everything here rests on experiments already run against a `kind` cluster
 
 - **Lesson rendering** — stays in the content repo's build; this serves the
   output. Keeps this binary language-homogeneous (no Ruby).
-- **OIDC / identity** — the scoring API takes a `userIDFunc(*http.Request)`;
-  wiring it to a real session cookie / OIDC provider is a small, isolated
-  addition, not baked into the core.
+- **Identity** — handled by `internal/auth` via **social login** (GitHub /
+  Google OAuth2) rather than a generic OIDC provider: fewer moving parts, no
+  IdP to run. A provider turns on when its client id/secret env vars are
+  present; with none set the platform runs anonymously. Login issues an
+  HMAC-signed session cookie, and `Manager.UserID(r)` feeds the scoring
+  API's `userIDFunc` hook so solves attribute to a real account.
 - **Perceptual-hash exercise grading** — the store accepts a `phashGrader`
   func (dHash/Hamming comparison of screenshot proofs); the comparator
   itself is pluggable and not yet ported.

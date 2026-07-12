@@ -2,7 +2,7 @@
 # Multi-arch build: `docker buildx build --platform linux/amd64,linux/arm64`.
 # TARGETOS/TARGETARCH are set by buildx per target platform; the build is
 # pure Go (CGO disabled) so cross-compilation needs no C toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.23 AS build
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev

@@ -26,6 +26,7 @@ scoring contract.
 | **Scoring** | `internal/scoring` | The `sha256(question+filename)` / `sha256(answer+salt)` contract, an in-memory challenge store, and the `/api/v1/challenges/{hash,attempt}` endpoints. Replaces the patched CTFd. |
 | **Router** | `internal/router` | Exposed-port routing: decodes `ip<A-B-C-D>-<session>...` hosts and proxies to the Pod IP. Runs in-cluster, where Pod IPs are directly routable. |
 | **Lessons** | `internal/lessons` | Serves the pre-rendered static lesson site. |
+| **Auth** | `internal/auth` | Social login (GitHub / Google OAuth2) with a signed session cookie; attributes solves to a real user. Anonymous when unconfigured. |
 
 Everything is wired together by `internal/server` and driven by the
 `cmd/training` CLI.
