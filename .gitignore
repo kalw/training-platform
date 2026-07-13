@@ -1,5 +1,7 @@
 /bin/
 /dist/
+# `training build` output of the example lessons (local preview artifact)
+/site/
 *.exe
 *.test
 *.out
@@ -7,3 +9,6 @@
 
 # e2e: host-built binary for the prebuilt local image (canonical image builds its own)
 e2e/bin/
+
+# npm install tree of the vendored front-end assets (dist files are committed)
+internal/content/assets/node_modules/
