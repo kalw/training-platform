@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,50 @@ func TestHTTPAttemptFlow(t *testing.T) {
 	data, _ = att["data"].(map[string]any)
 	if data["status"] != "incorrect" {
 		t.Fatalf("expected incorrect, got %v", att)
+	}
+}
+
+// The exercise result page is served from the learner's session Pod (a
+// different origin than the platform), so the scoring API must answer the
+// CORS preflight and reflect the Origin on the actual submission.
+func TestScoringCORS(t *testing.T) {
+	srv := httptest.NewServer(Handler(NewStore(nil), nil))
+	defer srv.Close()
+
+	const origin = "http://ip10-244-0-9-iabc-8888.direct.example.test:8080"
+
+	// Preflight: 204 with the reflected origin and the POST method allowed.
+	req, _ := http.NewRequest(http.MethodOptions, srv.URL+"/api/v1/challenges/attempt", nil)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("preflight status = %d, want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != origin {
+		t.Errorf("Allow-Origin = %q, want reflected %q", got, origin)
+	}
+	if !strings.Contains(resp.Header.Get("Access-Control-Allow-Methods"), "POST") {
+		t.Error("preflight did not allow POST")
+	}
+	if resp.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Error("preflight did not allow credentials (needed to attribute authed solves)")
+	}
+
+	// Actual POST also carries the reflected origin.
+	resp2, err := http.Post(srv.URL+"/api/v1/challenges/attempt", "application/json",
+		strings.NewReader(`{"challenge_hash":"deadbeef","submission":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	// (no Origin header here — just assert the handler still responds)
+	if resp2.StatusCode == http.StatusMethodNotAllowed {
+		t.Error("POST to attempt was blocked by the CORS wrapper")
 	}
 }
 

@@ -228,6 +228,10 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 	// builds also copy them next to the site so it can be hosted standalone.
 	mux.Handle("/assets/", content.AssetsHandler())
 
+	// Exercise proof client: the result page an exercise image serves loads
+	// /js/exercise-verify.js from here to screenshot itself and submit.
+	mux.Handle("/js/", content.VerifyHandler())
+
 	// Scoreboard page: lists all challenges and every recorded solve.
 	mux.HandleFunc("/scoreboard", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

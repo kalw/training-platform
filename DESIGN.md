@@ -121,6 +121,15 @@ events) is not vendored; see README "Relationship to training-console-pwd".
   `exercise_result:` front-matter key selects the page; `.png`/`.jpg`
   references skip the browser). This is the Go equivalent of the legacy
   chromium step in `exportChallenges.sh`.
+
+  The **client** that produces the capture is `exercise-verify.js` (served at
+  `/js/`, embedded, not vendored): the learner's result page — served from
+  their session Pod through the exposed-port router, a different origin than
+  the platform — loads it, html2canvas-screenshots the page, and POSTs the
+  proof. The scoring API therefore carries CORS (reflect-origin +
+  credentials) so the cross-origin submission attributes the solve. This is
+  the port of the exercises-template "result page → verify script → CTFd"
+  contract onto the one binary.
 - **Persistent scoring store** — challenges are in-memory, seeded at boot
   from the challenges file (idempotent, stateless-content model). A durable
   solve log (for leaderboards across restarts) would back `Store` with a DB.

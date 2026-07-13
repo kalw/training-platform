@@ -15,9 +15,10 @@ npm ci --no-audit --no-fund
 cp node_modules/@xterm/xterm/lib/xterm.js       xterm.js
 cp node_modules/@xterm/xterm/css/xterm.css      xterm.css
 cp node_modules/@xterm/addon-fit/lib/addon-fit.js xterm-addon-fit.js
+cp node_modules/html2canvas/dist/html2canvas.min.js html2canvas.min.js
 
 echo "vendored from lockfile:"
 node -e 'const l=require("./package-lock.json").packages;
-for (const p of ["node_modules/@xterm/xterm","node_modules/@xterm/addon-fit"])
+for (const p of ["node_modules/@xterm/xterm","node_modules/@xterm/addon-fit","node_modules/html2canvas"])
   console.log(" ", p.replace("node_modules/",""), l[p].version)'
-shasum -a 256 xterm.js xterm.css xterm-addon-fit.js
+shasum -a 256 xterm.js xterm.css xterm-addon-fit.js html2canvas.min.js

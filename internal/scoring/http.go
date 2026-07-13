@@ -79,7 +79,31 @@ func Handler(store *Store, userIDFunc func(*http.Request) string) http.Handler {
 			"data":    map[string]any{"status": status},
 		})
 	})
-	return mux
+	return withCORS(mux)
+}
+
+// withCORS lets the exercise result page — served from the learner's session
+// Pod (a different origin than the platform, reached via the exposed-port
+// router) — POST its screenshot proof to the scoring API. It reflects the
+// request Origin (with credentials, so an authenticated solve still
+// attributes) and answers the preflight. Scoring exposes no secrets and
+// grades by hash, so reflecting any origin is safe here.
+func withCORS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 var hashPathRe = regexp.MustCompile(`^/api/v1/challenges/hash/([0-9a-fA-F]+)$`)

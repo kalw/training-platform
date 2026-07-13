@@ -37,12 +37,16 @@ the default (port 80, `/result.html`). The marked `webserver` link itself
 stays inline as a plain live preview. Without any mark, the button uses the
 defaults.
 
-Clicking **Test Exercise** opens the exercise's result page carrying a
-`hash_code`. The verify script screenshots that page at 1024×768 and submits
-the capture to `/api/v1/challenges/attempt`. The server computes a
-**perceptual hash (dHash)** of your capture and accepts it when it's within a
-small **Hamming distance** of the reference — so identical-looking pages pass
-even though no two browser screenshots are ever byte-identical.
+Clicking **Test Exercise** opens the exercise's result page (served by your
+session on port 8888) carrying a `hash_code`. The page's loader pulls
+`js/exercise-verify.js` from the lessons site, which screenshots the page at
+1024×768 with html2canvas and submits the capture to
+`/api/v1/challenges/attempt` — a small chip in the corner reports
+"✓ proof accepted — recorded". The server computes a **perceptual hash
+(dHash)** of your capture and accepts it when it's within a small **Hamming
+distance** of the reference — so identical-looking pages pass even though no
+two browser screenshots are ever byte-identical. The solve then shows on the
+[`/scoreboard`](/scoreboard).
 
 The reference flag for this exercise (`phash$…:12`) is produced at **build
 time** by `training build`: it renders the expected result page
