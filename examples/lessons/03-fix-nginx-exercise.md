@@ -21,19 +21,23 @@ page as proof.
 
 {% exercise %}
 The status page is broken. Fix the web server config inside your session so
-[webserver](/){:id="exerciseDemo"}{:data-term=".term1"}{:data-port="8888"} renders the green **success** panel, then submit it.
+[webserver](/03-fix-nginx-result.html){:id="exerciseDemo"}{:data-term=".term1"}{:data-port="8888"} renders the green **success** panel, then submit it.
 {% endexercise %}
 
 ## How it's graded
 
-The `{:id="exerciseDemo"}` mark on the link above makes it *the* demo link
-for this exercise (Nth marked link ↔ Nth exercise block, like the legacy
-`writing-tutorials.md` contract): it carries the challenge `hash_code`, its
-`data-port`/href decide where the learner's result page is fetched from, and
-the exercise's built-in "Test Exercise" button is dropped. Without the mark,
-a default button appears (port 80, `/result.html`).
+Every exercise renders a **"Test Exercise"** button (the learner's submit
+affordance). The `{:id="exerciseDemo"}` mark on the link above *supplies that
+button's routing* (Nth marked link ↔ Nth exercise block, like the legacy
+`writing-tutorials.md` contract): the button adopts the mark's `data-port`,
+href (result-page path), `data-term`, `data-host-prefix` and `data-protocol`,
+and carries the challenge `hash_code`. Here that points the button at the
+result page on port `8888` — the port the exercise image serves — instead of
+the default (port 80, `/result.html`). The marked `webserver` link itself
+stays inline as a plain live preview. Without any mark, the button uses the
+defaults.
 
-Clicking the demo link opens the exercise's result page carrying a
+Clicking **Test Exercise** opens the exercise's result page carrying a
 `hash_code`. The verify script screenshots that page at 1024×768 and submits
 the capture to `/api/v1/challenges/attempt`. The server computes a
 **perceptual hash (dHash)** of your capture and accepts it when it's within a

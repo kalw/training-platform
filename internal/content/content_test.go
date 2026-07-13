@@ -86,8 +86,8 @@ Fix the web server so the status page renders.
 	if len(ch.Flags) != 1 || ch.Flags[0] != wantFlag {
 		t.Errorf("exercise flag = %v, want computed %q", ch.Flags, wantFlag)
 	}
-	if !strings.Contains(l.HTML, `id="exerciseDemo"`) || !strings.Contains(l.HTML, `data-hash-code="`+ch.Hash+`"`) {
-		t.Error("exercise demo link / hash_code not rendered")
+	if !strings.Contains(l.HTML, `class="exercise-demo"`) || !strings.Contains(l.HTML, `data-hash-code="`+ch.Hash+`"`) {
+		t.Error("exercise demo button / hash_code not rendered")
 	}
 }
 
@@ -124,39 +124,52 @@ func TestPlainLessonHasNoChallenges(t *testing.T) {
 func TestAuthoredExerciseDemoLinkPairing(t *testing.T) {
 	res := funcResolver(func(string, int) (string, error) { return "phash$0000000000000001:5", nil })
 
-	// An authored {:id="exerciseDemo"} link takes over from the built-in
-	// button: it gets the exercise's hash_code, keeps its own port/path, and
-	// the auto "Test Exercise" anchor disappears (the reported bug: the auto
-	// button hardcoded port 80 + /result.html regardless of the lesson).
+	// An authored {:id="exerciseDemo"} link SUPPLIES the routing of the always-
+	// present "Test Exercise" button (the reported bug was that marking an
+	// inline link dropped the button, and the default button hit port 80 not
+	// the exercise's real result-page port). The button adopts port/path/term;
+	// the marked link stays inline as a plain port link.
 	src := []byte("---\ntitle: E\n---\n" +
 		"{% exercise %}\nFix it so " +
-		"[webserver](/status){:id=\"exerciseDemo\"}{:data-term=\".term1\"}{:data-port=\"8888\"} is green.\n" +
+		"[webserver](/status){:id=\"exerciseDemo\"}{:data-term=\".term2\"}{:data-port=\"8888\"} is green.\n" +
 		"{% endexercise %}\n")
 	l, err := Render("ex", src, "s", res)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := l.Challenges[0].Hash
-	if !strings.Contains(l.HTML, `data-port="8888" data-hash-code="`+h+`"`) {
-		t.Error("authored demo link did not receive the exercise hash_code")
+	// The button is present, styled, carries the hash, and adopted the
+	// authored port / path / term (not the port-80 default).
+	if !strings.Contains(l.HTML, "Test Exercise") {
+		t.Error("built-in Test Exercise button must always render")
 	}
-	if strings.Contains(l.HTML, "Test Exercise") || strings.Contains(l.HTML, `data-port="80"`) {
-		t.Error("built-in Test Exercise button should be dropped when a demo link is authored")
+	if !strings.Contains(l.HTML, `data-hash-code="`+h+`"`) {
+		t.Error("demo button missing the exercise hash_code")
 	}
+	for _, want := range []string{`data-port="8888"`, `data-path="/status"`, `data-term=".term2"`} {
+		if !strings.Contains(l.HTML, want) {
+			t.Errorf("demo button did not adopt authored routing %s", want)
+		}
+	}
+	if strings.Contains(l.HTML, `data-port="80"`) {
+		t.Error("demo button kept the default port 80 instead of the authored 8888")
+	}
+	// The authored inline link survives as a plain preview link.
 	if !strings.Contains(l.HTML, `href="/status"`) {
-		t.Error("authored demo link href (result page path) lost")
+		t.Error("authored inline link lost")
 	}
 
-	// Without an authored link the built-in button stays.
+	// Without an authored link the button uses the defaults.
 	l2, err := Render("ex2", []byte("{% exercise %}\nFix it.\n{% endexercise %}\n"), "s", res)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(l2.HTML, "Test Exercise") {
-		t.Error("built-in Test Exercise button missing when no demo link is authored")
+	if !strings.Contains(l2.HTML, "Test Exercise") || !strings.Contains(l2.HTML, `data-port="80"`) ||
+		!strings.Contains(l2.HTML, `data-path="/result.html"`) {
+		t.Error("default demo button (port 80, /result.html) missing")
 	}
 
-	// Two exercises: Nth marked link pairs with Nth block ({:class=...} form).
+	// Two exercises: Nth marked link supplies the Nth button's routing.
 	src3 := []byte("[a](/a){:class=\"exerciseDemo\"}{:data-port=\"1111\"}\n\n" +
 		"{% exercise %}\none\n{% endexercise %}\n\n" +
 		"[b](/b){:class=\"exerciseDemo\"}{:data-port=\"2222\"}\n\n" +
@@ -166,11 +179,14 @@ func TestAuthoredExerciseDemoLinkPairing(t *testing.T) {
 		t.Fatal(err)
 	}
 	h1, h2 := l3.Challenges[0].Hash, l3.Challenges[1].Hash
-	if !strings.Contains(l3.HTML, `data-port="1111" data-hash-code="`+h1+`"`) ||
-		!strings.Contains(l3.HTML, `data-port="2222" data-hash-code="`+h2+`"`) {
-		t.Error("Nth authored link not paired with Nth exercise block")
+	if !strings.Contains(l3.HTML, `data-port="1111" data-path="/a" data-term=".term1" href="#">Test Exercise</a>`) &&
+		!strings.Contains(l3.HTML, `data-hash-code="`+h1+`" data-port="1111"`) {
+		t.Error("first button did not adopt the first authored link's port")
 	}
-	if strings.Contains(l3.HTML, "Test Exercise") {
-		t.Error("no built-in buttons expected when every exercise has an authored link")
+	if !strings.Contains(l3.HTML, `data-hash-code="`+h2+`" data-port="2222"`) {
+		t.Error("second button did not adopt the second authored link's port")
+	}
+	if n := strings.Count(l3.HTML, `>Test Exercise</a>`); n != 2 {
+		t.Errorf("expected 2 Test Exercise buttons, got %d", n)
 	}
 }
