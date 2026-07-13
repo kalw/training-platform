@@ -77,6 +77,9 @@ func BuildDirWithResolver(srcDir, outDir, salt string, resolver ExerciseResolver
 	if err := os.WriteFile(filepath.Join(outDir, "index.html"), []byte(renderIndex(index)), 0o644); err != nil {
 		return count, all, err
 	}
+	if err := WriteAssets(outDir); err != nil {
+		return count, all, fmt.Errorf("copying front-end assets: %w", err)
+	}
 	blob, _ := json.MarshalIndent(all, "", "  ")
 	if err := os.WriteFile(filepath.Join(outDir, "challenges.json"), blob, 0o644); err != nil {
 		return count, all, err

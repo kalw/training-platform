@@ -24,6 +24,14 @@ jobs:
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "unformatted files:"; echo "$out"; exit 1; fi
+      - name: vendored assets match the npm lockfile
+        # `make assets` re-copies the dist files from the lockfile-pinned npm
+        # packages; any diff means the committed files drifted from the pins.
+        # (Renovate bumps only the pins — the assets-sync workflow pushes the
+        # regenerated files onto its PR; this step is the enforcement.)
+        run: |
+          make assets
+          git diff --exit-code internal/content/assets
 
   # Cross-compile every OS/arch and upload the binaries. Proves the whole
   # tree builds for each target (pure Go, no cgo) on every push/PR.

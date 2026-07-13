@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "One PR for the vendored front-end assets; the assets-sync workflow regenerates the committed dist files on the PR branch.",
+      "matchFileNames": ["internal/content/assets/package.json"],
+      "groupName": "vendored front-end assets (xterm)"
+    }
+  ]
+}

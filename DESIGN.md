@@ -86,10 +86,26 @@ Everything here rests on experiments already run against a `kind` cluster
   cluster-wide. On clusters that forbid privileged Pods entirely, run
   sessions under a sandboxed RuntimeClass (gVisor/Kata/sysbox) instead.
 
-## Deliberately deferred
+## The lesson page front-end (terminals)
 
-- **Lesson rendering** — stays in the content repo's build; this serves the
-  output. Keeps this binary language-homogeneous (no Ruby).
+The rendered page embeds **xterm.js** (the same emulator the legacy PWD SDK
+used, three major versions later) rather than a hand-rolled `<div>`: session
+shells emit ANSI sequences, and only a real terminal emulator renders them.
+The vendored copy is pinned as npm dependencies in
+`internal/content/assets/package.json` (+ lockfile) and refreshed by
+`make assets` (`npm ci` + copy) — a Renovate-manageable lifecycle instead of
+a one-off fetch, with CI enforcing the committed copies match the pins. The terminal WebSocket
+carries binary frames for TTY bytes and JSON text frames for control
+(resize → `remotecommand.TerminalSizeQueue`), so plain byte-stream clients
+(the e2e spec, `websocat`) keep working.
+
+The page reimplements the legacy SDK's *contract* — `terms:` node panels,
+`.termN` click-to-run, `{:data-port=}` link rewriting, reconnect, close —
+against this binary's session API (create/status/keepalive/delete + TTL GC
+server-side). The SDK itself (xterm 2.9.2, webpack 2, socket.io-style
+events) is not vendored; see README "Relationship to training-console-pwd".
+
+## Deliberately deferred
 - **Identity** — handled by `internal/auth` via **social login** (GitHub /
   Google OAuth2) rather than a generic OIDC provider: fewer moving parts, no
   IdP to run. A provider turns on when its client id/secret env vars are

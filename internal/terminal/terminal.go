@@ -77,11 +77,12 @@ func (b *Bridge) Attach(w http.ResponseWriter, r *http.Request, pod string) erro
 	if err != nil {
 		return err
 	}
-	stream := &wsStream{ws: ws}
+	stream := newWSStream(ws)
 	return exec.StreamWithContext(r.Context(), remotecommand.StreamOptions{
-		Stdin:  stream,
-		Stdout: stream,
-		Stderr: stream,
-		Tty:    true,
+		Stdin:             stream,
+		Stdout:            stream,
+		Stderr:            stream,
+		Tty:               true,
+		TerminalSizeQueue: stream, // browser resize control frames -> TTY size
 	})
 }

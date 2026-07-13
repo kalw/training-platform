@@ -1,0 +1,39 @@
+# Keeps the committed vendored assets (internal/content/assets/*.js|css) in
+# sync with the npm pins on PRs that change them — typically Renovate bumping
+# @xterm/*. Renovate only edits package.json/package-lock.json; this runs
+# `make assets` and pushes the regenerated dist files onto the PR branch so
+# the "vendored assets match the npm lockfile" CI check passes untouched.
+name: assets-sync
+
+on:
+  pull_request:
+    paths:
+      - "internal/content/assets/package.json"
+      - "internal/content/assets/package-lock.json"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    # Same-repo branches only (a fork's branch can't be pushed to with the
+    # workflow token; forks fall back to the CI check telling the author to
+    # run `make assets`).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - run: make assets
+      - name: commit regenerated assets if they changed
+        run: |
+          if git diff --quiet internal/content/assets; then
+            echo "vendored assets already in sync"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add internal/content/assets
+          git commit -m "chore(assets): regenerate vendored files from npm pins"
+          git push

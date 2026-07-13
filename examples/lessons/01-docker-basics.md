@@ -12,9 +12,10 @@ instance you get when you click **Start session** on the right.
 ## Try the console
 
 The panel on the right is a live terminal into a session Pod, bridged over a
-WebSocket to the Kubernetes `pods/exec` API. Once connected, try:
+WebSocket to the Kubernetes `pods/exec` API. Once connected,
+**click the block below** — `.term1` code blocks auto-run in terminal 1:
 
-```
+```.term1
 echo "hello from a pod in kind"
 uname -a
 ls /

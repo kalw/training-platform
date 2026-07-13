@@ -29,6 +29,10 @@ type FrontMatter struct {
 	// Image boots the session instance for this lesson (a DinD image, or a
 	// custom exercise image built FROM training-exercises-template).
 	Image string `yaml:"image"`
+	// Terms is the number of terminal windows on the page (0–6), one session
+	// instance each, mirroring the legacy `terms:` front-matter key. Nil
+	// defaults to 1; 0 renders a lesson with no console at all.
+	Terms *int `yaml:"terms"`
 	// ExerciseResult selects the reference result page whose perceptual hash
 	// is computed at build time to grade this lesson's exercise. It's a path
 	// relative to the lessons directory (an .html rendered headlessly, or a
@@ -201,7 +205,7 @@ func (l *Lesson) renderExercise(slug, inner string, resolver ExerciseResolver) (
 		flags = append(flags, flag)
 	}
 	block := fmt.Sprintf(`<div class="exercise" data-challenge="%s"><div class="q">%s</div>`+
-		`<a id="exerciseDemo" class="exercise-demo" data-hash-code="%s" data-term=".term1" data-port="80" href="#">Test Exercise</a>`+
+		`<a id="exerciseDemo" class="exercise-demo" data-hash-code="%s" data-term=".term1" data-port="80" data-path="/result.html" href="#">Test Exercise</a>`+
 		`<div class="verdict"></div></div>`,
 		chHash, renderMarkdown(text), chHash)
 	return block, scoring.Challenge{Hash: chHash, Name: "exercise-" + shortName(text), Value: 20, Flags: flags}, nil

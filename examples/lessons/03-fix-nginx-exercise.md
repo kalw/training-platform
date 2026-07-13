@@ -8,6 +8,7 @@ image: ghcr.io/kalw/my-broken-nginx:latest
 # image so the build is deterministic and browser-free.
 exercise_result: 03-fix-nginx-result.png
 exercise_threshold: 20
+terms: 2
 ---
 
 # Fix the broken web server
@@ -20,7 +21,7 @@ page as proof.
 
 {% exercise %}
 The status page is broken. Fix the web server config inside your session so
-`http://localhost/` renders the green **success** panel, then submit it.
+[webserver](/){:data-term=".term1"}{:data-port="8080"} renders the green **success** panel, then submit it.
 {% endexercise %}
 
 ## How it's graded

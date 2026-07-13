@@ -11,7 +11,7 @@ LDFLAGS     := -s -w \
 # OS/arch matrix for `make release-build`.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: all build test vet lint tidy run clean release-build image
+.PHONY: all build test vet lint tidy run clean release-build image assets
 
 all: vet test build
 
@@ -26,6 +26,12 @@ vet:
 
 tidy:
 	go mod tidy
+
+# Refresh the vendored front-end assets (xterm.js & co) from the npm pins in
+# internal/content/assets/package.json (+ lockfile, integrity-verified by
+# `npm ci`). Renovate manages the pins; CI enforces the copies match.
+assets:
+	./scripts/vendor-assets.sh
 
 run: build
 	./bin/$(BINARY) serve

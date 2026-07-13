@@ -13,6 +13,10 @@ func TestDecodeHost(t *testing.T) {
 	}{
 		{"ip10-244-0-16-abcd1234.direct.example.com", 80, "10.244.0.16", 80, false},
 		{"ip10-244-0-16-abcd1234-8080.direct.example.com", 80, "10.244.0.16", 8080, false},
+		// {:data-host-prefix="…"} links prepend "<prefix>-" to the encoding.
+		{"exampleprefix-ip10-244-0-16-abcd1234-8080.direct.example.com", 80, "10.244.0.16", 8080, false},
+		// A prefix containing "ip" must not confuse the decoder.
+		{"shipping-ip10-244-0-16-abcd1234.direct.example.com", 80, "10.244.0.16", 80, false},
 		{"ip192-168-1-1-sess1.direct.example.com:443", 80, "192.168.1.1", 80, false}, // trailing :443 is the browser port, not the instance port
 		{"pwdsomething.direct.example.com", 80, "", 0, true},                         // no ip-encoding
 		{"ip10-244-0-999-sess1.direct.example.com", 80, "", 0, true},                 // octet > 255

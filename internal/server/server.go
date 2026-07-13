@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kalw/training-platform/internal/auth"
+	"github.com/kalw/training-platform/internal/content"
 	"github.com/kalw/training-platform/internal/dockershim"
 	"github.com/kalw/training-platform/internal/lessons"
 	"github.com/kalw/training-platform/internal/scoring"
@@ -41,6 +42,10 @@ type Config struct {
 	ShimNamespace string
 	// Salt is the scoring salt (also used by the lessons build; must match).
 	Salt string
+	// RouterHost is the public suffix exposed-port links are built on (e.g.
+	// "direct.training.example.com"). Served to lesson pages via
+	// GET /api/v1/config; empty leaves {:data-port=} links inert.
+	RouterHost string
 	// ChallengesFile, if set, seeds the scoring store at boot (JSON produced
 	// by the lessons build). Missing file is logged and ignored.
 	ChallengesFile string
@@ -97,6 +102,7 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		NamespacePrefix: cfg.SessionNamespacePrefix,
 		TTL:             cfg.SessionTTL,
 		DefaultImage:    cfg.DefaultInstanceImage,
+		HostFQDN:        cfg.RouterHost,
 	})
 	if err != nil {
 		log.Printf("sessions/terminals disabled: no Kubernetes cluster available: %v", err)
@@ -147,28 +153,60 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		inst, err := eng.NewEphemeralInstance(ctx, termNS, body.Image)
 		if err != nil {
 			log.Printf("sessions: create: %v", err)
-			http.Error(w, "could not start session", http.StatusBadGateway)
+			// Surface the pod-lifecycle reason (ImagePullBackOff & co) so the
+			// page can show why the session didn't come up.
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"pod": inst.Name, "ip": inst.IP, "image": inst.Image})
+		writeJSON(w, http.StatusCreated, map[string]any{"pod": inst.Name, "ip": inst.IP, "image": inst.Image, "expires_at": inst.ExpiresAt})
 	})
+	// Per-instance lifecycle: status (GET), teardown (DELETE) and TTL
+	// keepalive (POST …/keepalive) — what a lesson page needs to reattach
+	// after a reload, stop a session, and stay alive while open.
 	mux.HandleFunc("/api/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
 		if eng == nil {
 			http.Error(w, "sessions unavailable (no cluster)", http.StatusServiceUnavailable)
 			return
 		}
-		if r.Method != http.MethodDelete {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		pod := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+		pod, action, _ := strings.Cut(rest, "/")
 		if !termPodRe.MatchString(pod) {
 			http.NotFound(w, r)
 			return
 		}
-		_ = eng.DeletePod(r.Context(), termNS, pod)
-		w.WriteHeader(http.StatusNoContent)
+		switch {
+		case action == "keepalive" && r.Method == http.MethodPost:
+			exp, err := eng.Extend(r.Context(), termNS, pod)
+			if err != nil {
+				http.Error(w, "no such session", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"pod": pod, "expires_at": exp})
+		case action == "" && r.Method == http.MethodGet:
+			st, err := eng.Status(r.Context(), termNS, pod)
+			if err != nil {
+				http.Error(w, "no such session", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, http.StatusOK, st)
+		case action == "" && r.Method == http.MethodDelete:
+			_ = eng.DeletePod(r.Context(), termNS, pod)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
+
+	// Runtime page config: everything is configured at container start (see
+	// the repo conventions), and lesson pages are pre-rendered static HTML —
+	// so deployment-specific values reach them here, not at build time.
+	mux.HandleFunc("/api/v1/config", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"router_host": cfg.RouterHost})
+	})
+
+	// Vendored front-end assets (xterm.js & co) baked into the binary; lesson
+	// builds also copy them next to the site so it can be hosted standalone.
+	mux.Handle("/assets/", content.AssetsHandler())
 
 	// Scoreboard page: lists all challenges and every recorded solve.
 	mux.HandleFunc("/scoreboard", func(w http.ResponseWriter, r *http.Request) {
