@@ -123,6 +123,13 @@ Sessions API: `POST /api/v1/sessions` (create, returns
 `GET /api/v1/config` serves runtime page config (`router_host` from
 `ROUTER_HOST` / `--router-host`), keeping pages build-once/deploy-anywhere.
 
+When `--router-host` is set, `serve` **also answers for exposed-port hosts
+itself**: a request whose Host is `ip<A-B-C-D>-<id>[-port].<router host>` is
+proxied straight to that Pod IP (the composed server runs in-cluster, where
+Pod IPs are routable). Point a wildcard ingress (`*.<router host>`) at the
+same Service and `{:data-port=}` links work with no extra deployment; the
+standalone `training router` remains for scaled setups.
+
 ### Vendored front-end assets
 
 xterm.js and its fit addon are pinned as ordinary npm dependencies in
@@ -206,10 +213,14 @@ make dev-down       # uninstall the release
 
 Knobs (all overridable): `KIND_CLUSTER=training`, `DEV_NS=training`,
 `DEV_RELEASE=training`, `LESSONS_SRC=examples/lessons`, `DEV_SALT=demo-salt`,
-`DEV_ROUTER_HOST=` (set it to enable exposed-port links). The dev install
+`DEV_ROUTER_HOST=` (overrides the dev default). The dev install
 uses [`deploy/helm/dev-values.yaml`](deploy/helm/dev-values.yaml): local
 `training-platform:dev` image, lessons from the `lessons` ConfigMap mounted
-at `/lessons`, a 5m idle TTL, plain-HTTP cookies. The restart on
+at `/lessons`, a 5m idle TTL, plain-HTTP cookies, and
+`routerHost: direct.127.0.0.1.sslip.io:8080` — so `{:data-port=}` links work
+straight through `make dev-forward`: the sslip.io wildcard resolves to
+127.0.0.1, the port-forward carries the request in, and `serve` proxies to
+the Pod IP encoded in the hostname (needs internet DNS for sslip.io). The restart on
 `dev-lessons` is what re-seeds the challenge store from `challenges.json`
 (the ConfigMap alone propagates files, not challenges). The `assets/` subdir
 of a built site is not in the ConfigMap (ConfigMaps are flat) — the binary
