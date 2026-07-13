@@ -246,20 +246,50 @@ function sessionUp(expiresAt){
   store.save(nodes.map(n=>n.pod));
   showExpiry(expiresAt);
   rewritePortLinks();
-  // Keepalive: extend every Pod's TTL while the page stays open, so the
-  // deployment can run a short --session-ttl and still never reap live use.
+  // Keepalive: slide every Pod's idle window while the page is open AND
+  // visible. A closed or long-hidden tab stops pinging, and the server's
+  // idle GC reaps the Pods after --session-idle-ttl (default 10m) — that is
+  // the whole abandoned-session story: no ping, no Pod.
   if(keepaliveTimer) clearInterval(keepaliveTimer);
-  keepaliveTimer = setInterval(async () => {
-    let exp = null;
-    for(const node of nodes.filter(n=>n.pod && !n.stopped)){
-      try {
-        const r = await fetch('/api/v1/sessions/'+node.pod+'/keepalive', {method:'POST'});
-        if(r.ok) exp = (await r.json()).expires_at;
-      } catch(e){}
-    }
-    if(exp) showExpiry(exp);
-  }, 60000);
+  keepaliveTimer = setInterval(() => { if(!document.hidden) keepalive(); }, 60000);
 }
+
+async function keepalive(){
+  let exp = null, gone = 0, live = 0;
+  for(const node of nodes.filter(n=>n.pod && !n.stopped)){
+    live++;
+    try {
+      const r = await fetch('/api/v1/sessions/'+node.pod+'/keepalive', {method:'POST'});
+      if(r.ok) exp = (await r.json()).expires_at;
+      else if(r.status===404) gone++;
+    } catch(e){}
+  }
+  if(live && gone === live){ expireUI(); return; }
+  if(exp) showExpiry(exp);
+}
+
+// The session outlived the page's absence (idle GC): reset the console UI
+// without issuing deletes for Pods that no longer exist.
+function expireUI(){
+  if(keepaliveTimer) clearInterval(keepaliveTimer);
+  for(const node of nodes){
+    if(node.ws){ node.stopped = true; try{ node.ws.close(); }catch(e){} }
+    if(node.term){ node.term.dispose(); node.term=null; node.fit=null; }
+    node.pod=null; node.ip=null; node.ws=null; node.stopped=false; node.retries=0;
+    nodeStatus(node, 'idle', false);
+  }
+  store.clear();
+  setStatus('session expired — start a new one', false);
+  showExpiry(null);
+  $('#boot').hidden = false;
+  $('#stop').hidden = true;
+}
+
+// Coming back to a hidden tab: ping immediately — either the Pods are still
+// there (window slides, terminal resumes) or they were reaped (UI resets).
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden && nodes.some(n=>n.pod)) keepalive();
+});
 
 async function start(){
   setStatus('starting…', false);
@@ -327,35 +357,41 @@ async function rewritePortLinks(){
     const node = nodeFromTermRef(a.dataset.term);
     if(!node || !node.ip) return;
     if(!routerHost){ a.title = 'exposed-port routing not configured (ROUTER_HOST)'; return; }
+    // Stash the authored path once so re-running the rewrite (reattach,
+    // second session) stays idempotent after href becomes a full URL.
+    if(!a.dataset.path){
+      const href = a.getAttribute('href') || '/';
+      a.dataset.path = href.startsWith('/') ? href : '/';
+    }
     const prefix = a.dataset.hostPrefix ? a.dataset.hostPrefix + '-' : '';
     const token = (node.pod||'').replace(/[^0-9a-z]/g, '') || 'i0';
     const host = prefix + 'ip' + node.ip.replace(/\./g,'-') + '-' + token + '-' + a.dataset.port + '.' + routerHost;
-    let path = a.dataset.path || a.getAttribute('href') || '/';
-    if(!path.startsWith('/')) path = '/';
+    const path = a.dataset.path;
     // {:data-protocol="https:"} overrides the scheme (legacy SDK contract);
     // default follows the page rather than the SDK's hardcoded http:.
     const proto = (a.dataset.protocol || location.protocol).replace(/:?$/, ':');
     let url = proto + '//' + host + path;
-    if(a.classList.contains('exercise-demo')){
-      // Exercise result pages load the verify script from here and submit
-      // the screenshot proof against this challenge hash (legacy contract).
+    if(a.dataset.hashCode){
+      // Exercise demo link (authored {:id="exerciseDemo"} or built-in): the
+      // result page loads the verify script from here and submits the
+      // screenshot proof against this challenge hash (legacy contract).
       url += (path.includes('?')?'&':'?') + 'hash_code=' + encodeURIComponent(a.dataset.hashCode) +
              '&lessonsDomain=' + encodeURIComponent(location.origin) +
              '&ctfdDomain=' + encodeURIComponent(location.origin);
     }
     a.href = url;
     a.target = '_blank';
+    a.dataset.routed = '1';
   });
 }
 
-document.querySelectorAll('.exercise-demo').forEach(a => {
+// Before a session is up, port links point nowhere useful — swallow the
+// click and hint instead (the legacy SDK bound window.open the same way).
+document.querySelectorAll('a[data-port]').forEach(a => {
   a.addEventListener('click', (e) => {
-    if(a.getAttribute('href') === '#' || !a.href || a.getAttribute('href').startsWith('#')){
-      e.preventDefault();
-      const v = a.parentElement.querySelector('.verdict');
-      v.textContent = 'start a session first — this opens the exercise result page (screenshot proof submitted for grading)';
-      v.style.color = 'var(--muted)';
-    }
+    if(a.dataset.routed) return;
+    e.preventDefault();
+    setStatus('start a session first', false);
   });
 });
 

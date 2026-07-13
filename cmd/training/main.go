@@ -94,7 +94,8 @@ func cmdServe(args []string) {
 	addr := fs.String("addr", ":8080", "listen address")
 	lessonsDir := fs.String("lessons-dir", envOr("LESSONS_DIR", ""), "static lesson site directory")
 	nsPrefix := fs.String("session-namespace-prefix", envOr("SESSION_NS_PREFIX", "session-"), "namespace prefix for sessions")
-	ttl := fs.Duration("session-ttl", 4*time.Hour, "default session lifetime")
+	ttl := fs.Duration("session-ttl", 4*time.Hour, "maximum session lifetime (hard cap)")
+	idleTTL := fs.Duration("session-idle-ttl", 10*time.Minute, "how long instance pods survive without a page keepalive (closed/hidden tab); negative disables idle GC")
 	dind := fs.String("instance-image", envOr("INSTANCE_IMAGE", "ghcr.io/kalw/training-console-pwd:dind"), "default session instance image")
 	termNS := fs.String("terminal-namespace", envOr("TERMINAL_NS", "training-sessions"), "namespace holding instance pods for terminals")
 	enableShim := fs.Bool("enable-shim", envBool("ENABLE_SHIM", true), "mount the Docker-API shim under /docker/")
@@ -109,6 +110,7 @@ func cmdServe(args []string) {
 		LessonsDir:             *lessonsDir,
 		SessionNamespacePrefix: *nsPrefix,
 		SessionTTL:             *ttl,
+		SessionIdleTTL:         *idleTTL,
 		DefaultInstanceImage:   *dind,
 		TerminalNamespace:      *termNS,
 		EnableShim:             *enableShim,

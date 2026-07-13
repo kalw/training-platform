@@ -39,4 +39,5 @@ exec "$BIN" serve \
   --addr ":$PORT" \
   --lessons-dir "$SITE" \
   --challenges-file "$SITE/challenges.json" \
+  --router-host "e2e.direct.test" \
   --enable-shim=false

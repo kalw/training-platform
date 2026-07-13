@@ -36,6 +36,7 @@ spec:
             - --addr=:{{ .Values.service.port }}
             - --session-namespace-prefix={{ .Values.serve.sessionNamespacePrefix }}
             - --session-ttl={{ .Values.serve.sessionTTL }}
+            - --session-idle-ttl={{ .Values.serve.sessionIdleTTL }}
             - --instance-image={{ .Values.serve.instanceImage }}
             - --terminal-namespace={{ .Values.sessionNamespace }}
             - --shim-namespace={{ .Values.sessionNamespace }}
@@ -45,6 +46,9 @@ spec:
             {{- end }}
             {{- if .Values.serve.baseURL }}
             - --base-url={{ .Values.serve.baseURL }}
+            {{- end }}
+            {{- if .Values.serve.routerHost }}
+            - --router-host={{ .Values.serve.routerHost }}
             {{- end }}
             {{- if .Values.challengesFile }}
             - --challenges-file={{ .Values.challengesFile }}

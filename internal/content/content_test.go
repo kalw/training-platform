@@ -120,3 +120,57 @@ func TestPlainLessonHasNoChallenges(t *testing.T) {
 		t.Error("body not rendered")
 	}
 }
+
+func TestAuthoredExerciseDemoLinkPairing(t *testing.T) {
+	res := funcResolver(func(string, int) (string, error) { return "phash$0000000000000001:5", nil })
+
+	// An authored {:id="exerciseDemo"} link takes over from the built-in
+	// button: it gets the exercise's hash_code, keeps its own port/path, and
+	// the auto "Test Exercise" anchor disappears (the reported bug: the auto
+	// button hardcoded port 80 + /result.html regardless of the lesson).
+	src := []byte("---\ntitle: E\n---\n" +
+		"{% exercise %}\nFix it so " +
+		"[webserver](/status){:id=\"exerciseDemo\"}{:data-term=\".term1\"}{:data-port=\"8888\"} is green.\n" +
+		"{% endexercise %}\n")
+	l, err := Render("ex", src, "s", res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := l.Challenges[0].Hash
+	if !strings.Contains(l.HTML, `data-port="8888" data-hash-code="`+h+`"`) {
+		t.Error("authored demo link did not receive the exercise hash_code")
+	}
+	if strings.Contains(l.HTML, "Test Exercise") || strings.Contains(l.HTML, `data-port="80"`) {
+		t.Error("built-in Test Exercise button should be dropped when a demo link is authored")
+	}
+	if !strings.Contains(l.HTML, `href="/status"`) {
+		t.Error("authored demo link href (result page path) lost")
+	}
+
+	// Without an authored link the built-in button stays.
+	l2, err := Render("ex2", []byte("{% exercise %}\nFix it.\n{% endexercise %}\n"), "s", res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(l2.HTML, "Test Exercise") {
+		t.Error("built-in Test Exercise button missing when no demo link is authored")
+	}
+
+	// Two exercises: Nth marked link pairs with Nth block ({:class=...} form).
+	src3 := []byte("[a](/a){:class=\"exerciseDemo\"}{:data-port=\"1111\"}\n\n" +
+		"{% exercise %}\none\n{% endexercise %}\n\n" +
+		"[b](/b){:class=\"exerciseDemo\"}{:data-port=\"2222\"}\n\n" +
+		"{% exercise %}\ntwo\n{% endexercise %}\n")
+	l3, err := Render("ex3", src3, "s", res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1, h2 := l3.Challenges[0].Hash, l3.Challenges[1].Hash
+	if !strings.Contains(l3.HTML, `data-port="1111" data-hash-code="`+h1+`"`) ||
+		!strings.Contains(l3.HTML, `data-port="2222" data-hash-code="`+h2+`"`) {
+		t.Error("Nth authored link not paired with Nth exercise block")
+	}
+	if strings.Contains(l3.HTML, "Test Exercise") {
+		t.Error("no built-in buttons expected when every exercise has an authored link")
+	}
+}

@@ -1,6 +1,6 @@
 ---
 title: Fix the broken web server — exercise
-image: ghcr.io/kalw/my-broken-nginx:latest
+image: nginx
 # The reference flag is computed at build time by perceptual-hashing the
 # expected result. exercise_result can be a rendered image (.png/.jpg —
 # hashed directly, no browser, CI-friendly) or an .html page (rendered
@@ -21,12 +21,19 @@ page as proof.
 
 {% exercise %}
 The status page is broken. Fix the web server config inside your session so
-[webserver](/){:data-term=".term1"}{:data-port="8080"} renders the green **success** panel, then submit it.
+[webserver](/){:id="exerciseDemo"}{:data-term=".term1"}{:data-port="8888"} renders the green **success** panel, then submit it.
 {% endexercise %}
 
 ## How it's graded
 
-Clicking **Test Exercise** opens the exercise's result page carrying a
+The `{:id="exerciseDemo"}` mark on the link above makes it *the* demo link
+for this exercise (Nth marked link ↔ Nth exercise block, like the legacy
+`writing-tutorials.md` contract): it carries the challenge `hash_code`, its
+`data-port`/href decide where the learner's result page is fetched from, and
+the exercise's built-in "Test Exercise" button is dropped. Without the mark,
+a default button appears (port 80, `/result.html`).
+
+Clicking the demo link opens the exercise's result page carrying a
 `hash_code`. The verify script screenshots that page at 1024×768 and submits
 the capture to `/api/v1/challenges/attempt`. The server computes a
 **perceptual hash (dHash)** of your capture and accepts it when it's within a

@@ -59,6 +59,10 @@ type Lesson struct {
 	FrontMatter FrontMatter
 	HTML        string
 	Challenges  []scoring.Challenge
+
+	// exerciseHashes are the exercise challenge hashes in source order, used
+	// to pair authored {:id="exerciseDemo"} links with their exercise block.
+	exerciseHashes []string
 }
 
 var (
@@ -121,6 +125,7 @@ func Render(slug string, src []byte, salt string, resolver ExerciseResolver) (*L
 	for i, ph := range placeholders {
 		rendered = strings.Replace(rendered, placeholderToken(i), ph, 1)
 	}
+	rendered = pairDemoLinks(rendered, l.exerciseHashes)
 
 	l.HTML = layout(fm, rendered)
 	return l, nil
@@ -204,11 +209,50 @@ func (l *Lesson) renderExercise(slug, inner string, resolver ExerciseResolver) (
 		}
 		flags = append(flags, flag)
 	}
+	l.exerciseHashes = append(l.exerciseHashes, chHash)
 	block := fmt.Sprintf(`<div class="exercise" data-challenge="%s"><div class="q">%s</div>`+
-		`<a id="exerciseDemo" class="exercise-demo" data-hash-code="%s" data-term=".term1" data-port="80" data-path="/result.html" href="#">Test Exercise</a>`+
+		`%s`+
 		`<div class="verdict"></div></div>`,
-		chHash, renderMarkdown(text), chHash)
+		chHash, renderMarkdown(text), autoDemoAnchor(chHash))
 	return block, scoring.Challenge{Hash: chHash, Name: "exercise-" + shortName(text), Value: 20, Flags: flags}, nil
+}
+
+// autoDemoAnchor is the built-in "Test Exercise" link an exercise block gets
+// when the author didn't write their own demo link (see pairDemoLinks). Its
+// defaults (port 80, /result.html) mirror the exercises-template contract.
+func autoDemoAnchor(chHash string) string {
+	return fmt.Sprintf(`<a id="exerciseDemo" class="exercise-demo" data-hash-code="%s" data-term=".term1" data-port="80" data-path="/result.html" href="#">Test Exercise</a>`, chHash)
+}
+
+var anchorTagRe = regexp.MustCompile(`<a\b[^>]*>`)
+
+// pairDemoLinks implements the legacy writing-tutorials.md contract for
+// authored exercise demo links: the Nth anchor marked {:id="exerciseDemo"}
+// (or {:class="exerciseDemo"} when a lesson has several) is paired with the
+// Nth exercise block — it receives that exercise's data-hash-code (the page
+// script appends the verify params to any anchor carrying one), and the
+// exercise's built-in "Test Exercise" link is dropped. This is how an author
+// controls the demo link's port, path, term, prefix and protocol.
+func pairDemoLinks(html string, hashes []string) string {
+	if len(hashes) == 0 {
+		return html
+	}
+	i := 0
+	out := anchorTagRe.ReplaceAllStringFunc(html, func(tag string) string {
+		if i >= len(hashes) || strings.Contains(tag, "data-hash-code=") {
+			return tag // ran out of exercises, or it's a built-in demo link
+		}
+		if !strings.Contains(tag, `id="exerciseDemo"`) && !strings.Contains(tag, `class="exerciseDemo"`) {
+			return tag
+		}
+		h := hashes[i]
+		i++
+		return strings.TrimSuffix(tag, ">") + ` data-hash-code="` + h + `">`
+	})
+	for j := 0; j < i; j++ {
+		out = strings.Replace(out, autoDemoAnchor(hashes[j]), "", 1)
+	}
+	return out
 }
 
 func splitFrontMatter(src []byte) (FrontMatter, string, error) {

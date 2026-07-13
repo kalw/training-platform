@@ -26,11 +26,17 @@ import (
 )
 
 const (
-	managedByLabel  = "app.kubernetes.io/managed-by"
-	managedByValue  = "training-platform"
-	sessionIDLabel  = "training.kalw/session-id"
-	expiresAtLabel  = "training.kalw/expires-at" // unix seconds, for GC
-	instancePodName = "instance"
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "training-platform"
+	sessionIDLabel = "training.kalw/session-id"
+	// expiresAtLabel is the hard cap: the maximum session lifetime, set at
+	// creation and never extended. idleExpiresAtLabel is the sliding window:
+	// refreshed by every keepalive ping; when the page goes away (tab closed,
+	// long-hidden), pings stop and the GC reaps the Pod after IdleTTL — this
+	// is what cleans up abandoned sessions quickly.
+	expiresAtLabel     = "training.kalw/expires-at"      // unix seconds
+	idleExpiresAtLabel = "training.kalw/idle-expires-at" // unix seconds
+	instancePodName    = "instance"
 )
 
 // Engine provisions and tears down sessions against a cluster.
@@ -38,7 +44,8 @@ type Engine struct {
 	cs       kubernetes.Interface
 	cfg      *rest.Config
 	nsPfx    string        // namespace prefix, e.g. "session-"
-	ttl      time.Duration // default session lifetime
+	ttl      time.Duration // maximum session lifetime (hard cap)
+	idleTTL  time.Duration // sliding keepalive window (<=0: no idle GC)
 	dindImg  string        // default instance image
 	hostFQDN string        // exported as PWD_HOST_FQDN inside instances
 }
@@ -47,8 +54,12 @@ type Engine struct {
 type Options struct {
 	// NamespacePrefix is prepended to session IDs to form namespace names.
 	NamespacePrefix string
-	// TTL is the default session lifetime (GC deletes expired namespaces).
+	// TTL is the maximum session lifetime (hard cap; GC deletes expired
+	// namespaces and Pods).
 	TTL time.Duration
+	// IdleTTL is how long an instance Pod survives without a keepalive ping
+	// from its page. 0 defaults to 10 minutes; negative disables idle GC.
+	IdleTTL time.Duration
 	// DefaultImage is the instance image when a session doesn't specify one.
 	DefaultImage string
 	// HostFQDN, when set, is exported to instances as PWD_HOST_FQDN — the
@@ -76,10 +87,13 @@ func New(opts Options) (*Engine, error) {
 	if opts.TTL == 0 {
 		opts.TTL = 4 * time.Hour
 	}
+	if opts.IdleTTL == 0 {
+		opts.IdleTTL = 10 * time.Minute
+	}
 	if opts.DefaultImage == "" {
 		opts.DefaultImage = "ghcr.io/kalw/training-console-pwd:dind"
 	}
-	return &Engine{cs: cs, cfg: cfg, nsPfx: opts.NamespacePrefix, ttl: opts.TTL, dindImg: opts.DefaultImage, hostFQDN: opts.HostFQDN}, nil
+	return &Engine{cs: cs, cfg: cfg, nsPfx: opts.NamespacePrefix, ttl: opts.TTL, idleTTL: opts.IdleTTL, dindImg: opts.DefaultImage, hostFQDN: opts.HostFQDN}, nil
 }
 
 // RESTConfig exposes the cluster config so callers (e.g. the terminal
@@ -204,16 +218,21 @@ func (e *Engine) NewEphemeralInstance(ctx context.Context, ns, image string) (*I
 		image = e.dindImg
 	}
 	name := "i-" + randSuffix()
-	expires := time.Now().Add(e.ttl).Unix()
+	now := time.Now()
+	expires := now.Add(e.ttl).Unix()
+	labels := map[string]string{
+		managedByLabel: managedByValue,
+		expiresAtLabel: fmt.Sprintf("%d", expires),
+	}
+	if e.idleTTL > 0 {
+		labels[idleExpiresAtLabel] = fmt.Sprintf("%d", now.Add(e.idleTTL).Unix())
+	}
 	priv := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
-			Labels: map[string]string{
-				managedByLabel: managedByValue,
-				expiresAtLabel: fmt.Sprintf("%d", expires),
-			},
+			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -238,10 +257,30 @@ func (e *Engine) NewEphemeralInstance(ctx context.Context, ns, image string) (*I
 		_ = e.cs.CoreV1().Pods(ns).Delete(context.WithoutCancel(ctx), name, metav1.DeleteOptions{GracePeriodSeconds: &grace})
 		return nil, err
 	}
-	return &Instance{Name: name, IP: ip, Image: image, ExpiresAt: expires}, nil
+	return &Instance{Name: name, IP: ip, Image: image, ExpiresAt: effectiveExpiry(labels)}, nil
 }
 
-// GCExpiredPods deletes managed instance Pods in ns whose TTL has passed.
+// effectiveExpiry is the next deadline for a Pod: the sooner of its hard cap
+// and its idle window (0 when neither label is set).
+func effectiveExpiry(labels map[string]string) int64 {
+	var hard, idle int64
+	_, _ = fmt.Sscanf(labels[expiresAtLabel], "%d", &hard)
+	_, _ = fmt.Sscanf(labels[idleExpiresAtLabel], "%d", &idle)
+	switch {
+	case hard == 0:
+		return idle
+	case idle == 0:
+		return hard
+	case idle < hard:
+		return idle
+	default:
+		return hard
+	}
+}
+
+// GCExpiredPods deletes managed instance Pods in ns that passed either
+// deadline: the hard session cap, or the idle window no page has refreshed
+// (closed tab, long-hidden page — this is the abandoned-Pod reaper).
 func (e *Engine) GCExpiredPods(ctx context.Context, ns string) (int, error) {
 	list, err := e.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: managedByLabel + "=" + managedByValue})
 	if err != nil {
@@ -251,9 +290,7 @@ func (e *Engine) GCExpiredPods(ctx context.Context, ns string) (int, error) {
 	deleted := 0
 	for i := range list.Items {
 		p := &list.Items[i]
-		var exp int64
-		_, _ = fmt.Sscanf(p.Labels[expiresAtLabel], "%d", &exp)
-		if exp != 0 && exp < now {
+		if exp := effectiveExpiry(p.Labels); exp != 0 && exp < now {
 			grace := int64(0)
 			if err := e.cs.CoreV1().Pods(ns).Delete(ctx, p.Name, metav1.DeleteOptions{GracePeriodSeconds: &grace}); err == nil {
 				deleted++
@@ -349,29 +386,35 @@ func (e *Engine) Status(ctx context.Context, ns, name string) (*PodStatus, error
 	if err != nil {
 		return nil, err
 	}
-	var exp int64
-	_, _ = fmt.Sscanf(pod.Labels[expiresAtLabel], "%d", &exp)
 	return &PodStatus{
 		Name:      name,
 		Phase:     string(pod.Status.Phase),
 		Ready:     pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "",
 		Reason:    fatalPodReason(pod),
 		IP:        pod.Status.PodIP,
-		ExpiresAt: exp,
+		ExpiresAt: effectiveExpiry(pod.Labels),
 	}, nil
 }
 
-// Extend pushes a Pod's TTL out by the engine TTL from now (the sessions
-// keepalive: a page that is still open pings so its instance isn't reaped).
-// Returns the new expiry (unix seconds).
+// Extend slides a Pod's idle window forward by IdleTTL (the sessions
+// keepalive: a page that is still open — and visible — pings so its instance
+// isn't reaped). The hard cap is never extended. Returns the Pod's next
+// effective expiry (unix seconds).
 func (e *Engine) Extend(ctx context.Context, ns, name string) (int64, error) {
-	expires := time.Now().Add(e.ttl).Unix()
-	patch := fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, expiresAtLabel, fmt.Sprintf("%d", expires))
-	_, err := e.cs.CoreV1().Pods(ns).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	pod, err := e.cs.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return 0, err
 	}
-	return expires, nil
+	if e.idleTTL <= 0 {
+		return effectiveExpiry(pod.Labels), nil // idle GC disabled: nothing to slide
+	}
+	idle := fmt.Sprintf("%d", time.Now().Add(e.idleTTL).Unix())
+	patch := fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, idleExpiresAtLabel, idle)
+	if _, err := e.cs.CoreV1().Pods(ns).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+		return 0, err
+	}
+	labels := map[string]string{expiresAtLabel: pod.Labels[expiresAtLabel], idleExpiresAtLabel: idle}
+	return effectiveExpiry(labels), nil
 }
 
 // GCExpired deletes every managed session namespace whose expires-at label is

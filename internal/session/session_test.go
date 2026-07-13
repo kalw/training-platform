@@ -62,10 +62,12 @@ func TestWaitForReadyFailsFastOnFatalState(t *testing.T) {
 }
 
 func TestStatusAndExtend(t *testing.T) {
-	past := fmt.Sprintf("%d", time.Now().Add(-time.Minute).Unix())
+	now := time.Now()
+	hard := fmt.Sprintf("%d", now.Add(time.Hour).Unix())
+	staleIdle := fmt.Sprintf("%d", now.Add(-time.Minute).Unix())
 	pod := podWithStatus("ns", "i-ok", corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.9"},
-		map[string]string{managedByLabel: managedByValue, expiresAtLabel: past})
-	e := &Engine{cs: fake.NewSimpleClientset(pod), ttl: time.Hour}
+		map[string]string{managedByLabel: managedByValue, expiresAtLabel: hard, idleExpiresAtLabel: staleIdle})
+	e := &Engine{cs: fake.NewSimpleClientset(pod), ttl: time.Hour, idleTTL: 10 * time.Minute}
 
 	st, err := e.Status(context.Background(), "ns", "i-ok")
 	if err != nil {
@@ -74,13 +76,19 @@ func TestStatusAndExtend(t *testing.T) {
 	if !st.Ready || st.Phase != "Running" || st.IP != "10.0.0.9" {
 		t.Errorf("status = %+v, want ready Running with IP", st)
 	}
+	// Effective expiry is the sooner deadline — here the stale idle window.
+	if st.ExpiresAt != now.Add(-time.Minute).Unix() {
+		t.Errorf("Status expiry %d, want the (stale) idle deadline", st.ExpiresAt)
+	}
 
+	// Extend slides the idle window by IdleTTL; the hard cap stays put.
 	exp, err := e.Extend(context.Background(), "ns", "i-ok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if min := time.Now().Add(50 * time.Minute).Unix(); exp < min {
-		t.Errorf("Extend expiry %d not pushed out (~1h), min %d", exp, min)
+	wantMin, wantMax := now.Add(9*time.Minute).Unix(), now.Add(11*time.Minute).Unix()
+	if exp < wantMin || exp > wantMax {
+		t.Errorf("Extend expiry %d, want idle window ~10m out [%d,%d]", exp, wantMin, wantMax)
 	}
 	st, _ = e.Status(context.Background(), "ns", "i-ok")
 	if st.ExpiresAt != exp {
@@ -89,5 +97,45 @@ func TestStatusAndExtend(t *testing.T) {
 
 	if _, err := e.Status(context.Background(), "ns", "i-missing"); err == nil {
 		t.Error("Status of a missing pod should error")
+	}
+	if _, err := e.Extend(context.Background(), "ns", "i-missing"); err == nil {
+		t.Error("Extend of a missing pod should error")
+	}
+}
+
+func TestGCReapsIdleExpiredPods(t *testing.T) {
+	now := time.Now()
+	hardFuture := fmt.Sprintf("%d", now.Add(time.Hour).Unix())
+	idlePast := fmt.Sprintf("%d", now.Add(-time.Minute).Unix())
+	idleFuture := fmt.Sprintf("%d", now.Add(9*time.Minute).Unix())
+	hardPast := fmt.Sprintf("%d", now.Add(-time.Minute).Unix())
+
+	mk := func(name string, labels map[string]string) *corev1.Pod {
+		labels[managedByLabel] = managedByValue
+		return podWithStatus("ns", name, corev1.PodStatus{Phase: corev1.PodRunning}, labels)
+	}
+	e := &Engine{cs: fake.NewSimpleClientset(
+		// Abandoned: page stopped pinging (closed tab) — idle window passed.
+		mk("i-abandoned", map[string]string{expiresAtLabel: hardFuture, idleExpiresAtLabel: idlePast}),
+		// Live: pings keep the idle window ahead.
+		mk("i-live", map[string]string{expiresAtLabel: hardFuture, idleExpiresAtLabel: idleFuture}),
+		// Over the hard cap even though recently pinged.
+		mk("i-capped", map[string]string{expiresAtLabel: hardPast, idleExpiresAtLabel: idleFuture}),
+		// Pre-idle-label Pod: only the hard cap applies.
+		mk("i-legacy", map[string]string{expiresAtLabel: hardFuture}),
+	), ttl: time.Hour, idleTTL: 10 * time.Minute}
+
+	n, err := e.GCExpiredPods(context.Background(), "ns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("GC reaped %d pods, want 2 (abandoned + capped)", n)
+	}
+	for name, wantAlive := range map[string]bool{"i-abandoned": false, "i-live": true, "i-capped": false, "i-legacy": true} {
+		_, err := e.Status(context.Background(), "ns", name)
+		if alive := err == nil; alive != wantAlive {
+			t.Errorf("pod %s alive=%v, want %v", name, alive, wantAlive)
+		}
 	}
 }
