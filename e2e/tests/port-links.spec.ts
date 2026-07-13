@@ -16,40 +16,45 @@ async function rewriteWithStubbedNodes(page) {
   });
 }
 
-test.describe('exercise demo link pairing', () => {
-  test('an authored {:id="exerciseDemo"} link replaces the built-in button and carries the challenge hash', async ({ page }) => {
+test.describe('exercise demo button', () => {
+  test('the "Test Exercise" button always renders and adopts the authored mark routing', async ({ page }) => {
     await page.goto('/03-fix-nginx-exercise.html');
 
     const challenge = await page.locator('.exercise').getAttribute('data-challenge');
-    const demo = page.locator('#exerciseDemo');
-    // The authored link (text "webserver", port 8888) is THE demo link…
-    await expect(demo).toHaveText('webserver');
-    await expect(demo).toHaveAttribute('data-port', '8888');
-    await expect(demo).toHaveAttribute('data-hash-code', challenge!);
-    // …and the built-in "Test Exercise" button (port 80) is gone. (Target
-    // anchors: the lesson prose legitimately mentions "Test Exercise".)
-    await expect(page.locator('a.exercise-demo')).toHaveCount(0);
+    const btn = page.locator('a.exercise-demo');
+    // The submit button is present, carries the challenge hash, and adopted
+    // the authored port 8888 (not the port-80 default).
+    await expect(btn).toHaveCount(1);
+    await expect(btn).toHaveText('Test Exercise');
+    await expect(btn).toHaveAttribute('data-hash-code', challenge!);
+    await expect(btn).toHaveAttribute('data-port', '8888');
     await expect(page.locator('a[data-port="80"]')).toHaveCount(0);
+    // The authored inline "webserver" link survives as a plain preview link
+    // (its own port link, no hash_code).
+    const inline = page.locator('#exerciseDemo');
+    await expect(inline).toHaveText('webserver');
+    await expect(inline).toHaveAttribute('data-port', '8888');
+    await expect(inline).not.toHaveAttribute('data-hash-code', /.*/);
   });
 
-  test('a lesson without an authored demo link keeps the built-in button', async ({ page }) => {
-    // The quiz lesson has no exercise at all — sanity-check the selector…
+  test('a lesson with no exercise has no demo button', async ({ page }) => {
     await page.goto('/02-containers-quiz.html');
-    await expect(page.locator('#exerciseDemo')).toHaveCount(0);
+    await expect(page.locator('a.exercise-demo')).toHaveCount(0);
   });
 });
 
 test.describe('port link rewriting (once a session is up)', () => {
-  test('the demo link rewrites to the authored port and carries the verify params', async ({ page }) => {
+  test('the demo button rewrites to the adopted port/path and carries the verify params', async ({ page }) => {
     await page.goto('/03-fix-nginx-exercise.html');
     const challenge = await page.locator('.exercise').getAttribute('data-challenge');
     await rewriteWithStubbedNodes(page);
 
-    const href = await page.locator('#exerciseDemo').getAttribute('href');
+    const href = await page.locator('a.exercise-demo').getAttribute('href');
     const url = new URL(href!);
-    // Authored data-port=8888 and href="/" — NOT the built-in 80//result.html.
+    // Adopted data-port=8888 and the authored result-page path — NOT the
+    // built-in 80//result.html.
     expect(url.host).toBe('ip10-244-9-1-iaabbcc000-8888.e2e.direct.test');
-    expect(url.pathname).toBe('/');
+    expect(url.pathname).toBe('/03-fix-nginx-result.html');
     expect(url.searchParams.get('hash_code')).toBe(challenge);
     expect(url.searchParams.get('lessonsDomain')).toContain('http://localhost:');
   });
@@ -66,17 +71,18 @@ test.describe('port link rewriting (once a session is up)', () => {
   test('re-running the rewrite is idempotent (reload/reattach path)', async ({ page }) => {
     await page.goto('/03-fix-nginx-exercise.html');
     await rewriteWithStubbedNodes(page);
-    const first = await page.locator('#exerciseDemo').getAttribute('href');
+    const first = await page.locator('a.exercise-demo').getAttribute('href');
     await rewriteWithStubbedNodes(page);
-    const second = await page.locator('#exerciseDemo').getAttribute('href');
+    const second = await page.locator('a.exercise-demo').getAttribute('href');
     expect(second).toBe(first);
-    // The authored path must survive (not degrade to "/" of the full URL).
+    // The adopted path must survive (not degrade to "/" of the full URL).
+    expect(new URL(second!).pathname).toBe('/03-fix-nginx-result.html');
     expect(new URL(second!).searchParams.get('hash_code')).toBeTruthy();
   });
 
   test('before a session, clicking a port link is swallowed with a hint', async ({ page }) => {
     await page.goto('/03-fix-nginx-exercise.html');
-    await page.locator('#exerciseDemo').click();
+    await page.locator('a.exercise-demo').click();
     await expect(page).toHaveURL(/03-fix-nginx-exercise\.html$/); // no navigation
     await expect(page.locator('#tstatus')).toHaveText(/start a session first/i);
   });

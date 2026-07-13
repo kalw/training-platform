@@ -217,42 +217,86 @@ func (l *Lesson) renderExercise(slug, inner string, resolver ExerciseResolver) (
 	return block, scoring.Challenge{Hash: chHash, Name: "exercise-" + shortName(text), Value: 20, Flags: flags}, nil
 }
 
-// autoDemoAnchor is the built-in "Test Exercise" link an exercise block gets
-// when the author didn't write their own demo link (see pairDemoLinks). Its
-// defaults (port 80, /result.html) mirror the exercises-template contract.
-func autoDemoAnchor(chHash string) string {
-	return fmt.Sprintf(`<a id="exerciseDemo" class="exercise-demo" data-hash-code="%s" data-term=".term1" data-port="80" data-path="/result.html" href="#">Test Exercise</a>`, chHash)
+// demoRouting is where an exercise's "Test Exercise" button sends the learner
+// (the result page it screenshots as proof). Defaults mirror the
+// exercises-template contract; an authored demo link overrides them.
+type demoRouting struct {
+	port, path, term, prefix, proto string
 }
 
-var anchorTagRe = regexp.MustCompile(`<a\b[^>]*>`)
+func defaultDemoRouting() demoRouting {
+	return demoRouting{port: "80", path: "/result.html", term: ".term1"}
+}
+
+// autoDemoAnchor is the built-in "Test Exercise" button every exercise block
+// renders. It's always present (the learner needs a clear submit affordance);
+// an authored {:id="exerciseDemo"} link only supplies its routing, it never
+// replaces it. Uses class (not id) so multiple exercises don't collide and it
+// never clashes with an authored link's id.
+func autoDemoAnchor(chHash string) string { return demoButton(chHash, defaultDemoRouting()) }
+
+func demoButton(chHash string, r demoRouting) string {
+	attrs := fmt.Sprintf(`data-port="%s" data-path="%s" data-term="%s"`, r.port, r.path, r.term)
+	if r.prefix != "" {
+		attrs += fmt.Sprintf(` data-host-prefix="%s"`, r.prefix)
+	}
+	if r.proto != "" {
+		attrs += fmt.Sprintf(` data-protocol="%s"`, r.proto)
+	}
+	return fmt.Sprintf(`<a class="exercise-demo" data-hash-code="%s" %s href="#">Test Exercise</a>`, chHash, attrs)
+}
+
+var (
+	anchorTagRe = regexp.MustCompile(`<a\b[^>]*>`)
+	attrValRe   = regexp.MustCompile(`\b([a-zA-Z-]+)="([^"]*)"`)
+)
 
 // pairDemoLinks implements the legacy writing-tutorials.md contract for
 // authored exercise demo links: the Nth anchor marked {:id="exerciseDemo"}
 // (or {:class="exerciseDemo"} when a lesson has several) is paired with the
-// Nth exercise block — it receives that exercise's data-hash-code (the page
-// script appends the verify params to any anchor carrying one), and the
-// exercise's built-in "Test Exercise" link is dropped. This is how an author
-// controls the demo link's port, path, term, prefix and protocol.
+// Nth exercise block. Rather than replace the block's "Test Exercise" button,
+// the marked link *supplies that button's routing* (port, path, term, prefix,
+// protocol) — so the learner always gets a clear button AND it opens the
+// right result page (often a non-80 port the exercise image serves). The
+// marked link itself stays a plain inline port link (a live preview).
 func pairDemoLinks(html string, hashes []string) string {
 	if len(hashes) == 0 {
 		return html
 	}
+	out := html
 	i := 0
-	out := anchorTagRe.ReplaceAllStringFunc(html, func(tag string) string {
+	for _, tag := range anchorTagRe.FindAllString(html, -1) {
 		if i >= len(hashes) || strings.Contains(tag, "data-hash-code=") {
-			return tag // ran out of exercises, or it's a built-in demo link
+			continue // ran out of exercises, or it's a built-in demo button
 		}
 		if !strings.Contains(tag, `id="exerciseDemo"`) && !strings.Contains(tag, `class="exerciseDemo"`) {
-			return tag
+			continue
 		}
-		h := hashes[i]
+		attrs := tagAttrs(tag)
+		r := defaultDemoRouting()
+		if v := attrs["data-port"]; v != "" {
+			r.port = v
+		}
+		if v := attrs["href"]; v != "" && strings.HasPrefix(v, "/") {
+			r.path = v
+		}
+		if v := attrs["data-term"]; v != "" {
+			r.term = v
+		}
+		r.prefix, r.proto = attrs["data-host-prefix"], attrs["data-protocol"]
+		out = strings.Replace(out, autoDemoAnchor(hashes[i]), demoButton(hashes[i], r), 1)
 		i++
-		return strings.TrimSuffix(tag, ">") + ` data-hash-code="` + h + `">`
-	})
-	for j := 0; j < i; j++ {
-		out = strings.Replace(out, autoDemoAnchor(hashes[j]), "", 1)
 	}
 	return out
+}
+
+// tagAttrs pulls the double-quoted attributes out of an opening tag.
+func tagAttrs(tag string) map[string]string {
+	m := map[string]string{}
+	for _, kv := range attrValRe.FindAllStringSubmatch(tag, -1) {
+		m[kv[1]] = kv[2]
+	}
+	return m
 }
 
 func splitFrontMatter(src []byte) (FrontMatter, string, error) {

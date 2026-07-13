@@ -394,9 +394,10 @@ async function rewritePortLinks(){
     const proto = (a.dataset.protocol || location.protocol).replace(/:?$/, ':');
     let url = proto + '//' + host + path;
     if(a.dataset.hashCode){
-      // Exercise demo link (authored {:id="exerciseDemo"} or built-in): the
-      // result page loads the verify script from here and submits the
-      // screenshot proof against this challenge hash (legacy contract).
+      // The "Test Exercise" button (class exercise-demo, carrying the
+      // challenge hash): the result page loads the verify script from here and
+      // submits the screenshot proof against this hash (legacy contract). An
+      // authored inline link carries no hash — it's a plain preview.
       url += (path.includes('?')?'&':'?') + 'hash_code=' + encodeURIComponent(a.dataset.hashCode) +
              '&lessonsDomain=' + encodeURIComponent(location.origin) +
              '&ctfdDomain=' + encodeURIComponent(location.origin);
