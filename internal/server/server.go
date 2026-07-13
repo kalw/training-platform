@@ -8,15 +8,19 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/kalw/training-platform/internal/auth"
 	"github.com/kalw/training-platform/internal/content"
 	"github.com/kalw/training-platform/internal/dockershim"
 	"github.com/kalw/training-platform/internal/lessons"
+	"github.com/kalw/training-platform/internal/router"
 	"github.com/kalw/training-platform/internal/scoring"
 	"github.com/kalw/training-platform/internal/session"
 	"github.com/kalw/training-platform/internal/terminal"
@@ -181,14 +185,27 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		case action == "keepalive" && r.Method == http.MethodPost:
 			exp, err := eng.Extend(r.Context(), termNS, pod)
 			if err != nil {
-				http.Error(w, "no such session", http.StatusNotFound)
+				// 404 must mean "the pod is gone" and nothing else: the page
+				// resets the whole session UI on it. Server-side trouble
+				// (e.g. RBAC missing the pods patch verb) is a 502 + log.
+				if apierrors.IsNotFound(err) {
+					http.Error(w, "no such session", http.StatusNotFound)
+					return
+				}
+				log.Printf("sessions: keepalive %s: %v", pod, err)
+				http.Error(w, "keepalive failed", http.StatusBadGateway)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"pod": pod, "expires_at": exp})
 		case action == "" && r.Method == http.MethodGet:
 			st, err := eng.Status(r.Context(), termNS, pod)
 			if err != nil {
-				http.Error(w, "no such session", http.StatusNotFound)
+				if apierrors.IsNotFound(err) {
+					http.Error(w, "no such session", http.StatusNotFound)
+					return
+				}
+				log.Printf("sessions: status %s: %v", pod, err)
+				http.Error(w, "status failed", http.StatusBadGateway)
 				return
 			}
 			writeJSON(w, http.StatusOK, st)
@@ -231,7 +248,36 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Handle("/", lessons.Handler(cfg.LessonsDir))
 
-	return mux, eng, nil
+	// Exposed-port routing: when RouterHost is configured, requests whose
+	// Host encodes a session target (ip<A-B-C-D>-<id>[-port].<RouterHost>)
+	// are proxied straight to that Pod IP — the composed server runs
+	// in-cluster, where Pod IPs are directly routable. This is what makes
+	// the lesson pages' {:data-port=} links actually resolve; a standalone
+	// `training router` deployment stays possible for scaled setups.
+	var h http.Handler = mux
+	if cfg.RouterHost != "" {
+		suffix := "." + stripPort(cfg.RouterHost)
+		proxy := router.NewHTTPProxy(80)
+		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(stripPort(r.Host), suffix) {
+				if _, err := router.DecodeHost(r.Host, 80); err == nil {
+					proxy.ServeHTTP(w, r)
+					return
+				}
+			}
+			mux.ServeHTTP(w, r)
+		})
+	}
+
+	return h, eng, nil
+}
+
+// stripPort drops a trailing :port from a host if present.
+func stripPort(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
 }
 
 var termPathRe = regexp.MustCompile(`^/terminals/([a-z0-9][a-z0-9-]*)$`)

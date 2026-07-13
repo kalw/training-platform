@@ -11,6 +11,11 @@ serve:
   lessonsDir: /lessons
   salt: demo-salt
   sessionIdleTTL: "5m"
+  # Exposed-port links through `make dev-forward` (localhost:8080):
+  # *.direct.127.0.0.1.sslip.io resolves to 127.0.0.1 (public wildcard DNS),
+  # the port-forward carries the request to the platform, and the in-serve
+  # router proxies to the Pod IP encoded in the hostname. Needs internet DNS.
+  routerHost: "direct.127.0.0.1.sslip.io:8080"
 
 challengesFile: /lessons/challenges.json
 

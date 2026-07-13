@@ -62,7 +62,10 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    # patch: the sessions keepalive slides the idle-expires-at label
+    # (Engine.Extend) — without it every keepalive 403s and the idle GC
+    # reaps pods that are actively in use.
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
   - apiGroups: [""]
     resources: ["pods/exec", "pods/attach"]
     verbs: ["create", "get"]

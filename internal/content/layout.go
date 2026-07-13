@@ -91,8 +91,12 @@ const pageTmpl = `<!doctype html>
   article pre.term-code::after{ content:"▶ term" attr(data-term); position:absolute; top:6px; right:8px; font-size:11px; color:var(--muted); font-family:inherit; }
   .termwrap{ margin-bottom:14px; }
   .termhead{ display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted); margin:0 0 6px; }
-  .termbox{ background:#0b0d13; border:1px solid var(--border); border-radius:6px; padding:6px; height:280px; }
-  .termbox .terminal{ height:100%%; }
+  .termbox{ background:#0b0d13; border:1px solid var(--border); border-radius:6px; padding:6px; height:300px; }
+  /* The .term div is the fit addon's measuring box: it must have a definite
+     size. xterm v5 renders its own element as .xterm inside it (NOT .terminal,
+     the old v2/v3 class), so fill both. */
+  .termbox .term{ height:100%%; width:100%%; }
+  .termbox .xterm{ height:100%%; }
   .quiz label,.exercise{ display:block; }
   .quiz label{ padding:8px 10px; border:1px solid var(--border); border-radius:6px; margin:6px 0; cursor:pointer; }
   .quiz label:hover{ border-color:var(--accent); }
@@ -144,7 +148,7 @@ function buildPanels(){
     wrap.innerHTML = '<div class="termhead">node'+n+' <span class="pill nstatus">idle</span></div>'+
                      '<div class="termbox"><div class="term term'+n+'"></div></div>';
     holder.appendChild(wrap);
-    nodes.push({ name:'node'+n, el:wrap, pod:null, ip:null, term:null, fit:null, ws:null, retries:0, stopped:false });
+    nodes.push({ name:'node'+n, el:wrap, pod:null, ip:null, term:null, fit:null, ro:null, ws:null, retries:0, stopped:false });
   }
 }
 
@@ -163,6 +167,23 @@ function makeTerm(node){
   node.term.onResize(({cols, rows}) => {
     if(node.ws && node.ws.readyState===1) node.ws.send(JSON.stringify({type:'resize', cols, rows}));
   });
+  // Fit once the element is laid out, and again whenever the panel resizes
+  // (grid column reflow, window resize, devtools open) — the panel width is
+  // only known after layout, so an open-time fit alone leaves it mis-sized.
+  fitNode(node);
+  node.ro = new ResizeObserver(() => fitNode(node));
+  node.ro.observe(node.el.querySelector('.termbox'));
+}
+
+// fitNode resizes the terminal to its container on the next frame (so the
+// browser has applied layout) and reports the size to the server TTY.
+function fitNode(node){
+  requestAnimationFrame(() => {
+    if(!node.fit || !node.term) return;
+    try { node.fit.fit(); } catch(e){ return; }
+    if(node.ws && node.ws.readyState===1)
+      node.ws.send(JSON.stringify({type:'resize', cols:node.term.cols, rows:node.term.rows}));
+  });
 }
 
 function connect(node){
@@ -173,8 +194,7 @@ function connect(node){
   ws.onopen = () => {
     node.retries = 0;
     nodeStatus(node, node.pod, true);
-    node.fit.fit();
-    ws.send(JSON.stringify({type:'resize', cols:node.term.cols, rows:node.term.rows}));
+    fitNode(node); // re-fit + push the size now that the TTY exists
     node.term.focus();
   };
   ws.onmessage = (e) => node.term.write(typeof e.data==='string' ? e.data : new Uint8Array(e.data));
@@ -261,7 +281,12 @@ async function keepalive(){
     try {
       const r = await fetch('/api/v1/sessions/'+node.pod+'/keepalive', {method:'POST'});
       if(r.ok) exp = (await r.json()).expires_at;
-      else if(r.status===404) gone++;
+      else if(r.status===404){
+        // Resetting the UI kills the session for the learner — double-check
+        // the pod really is gone before believing it.
+        const s = await fetch('/api/v1/sessions/'+node.pod);
+        if(s.status===404) gone++;
+      }
     } catch(e){}
   }
   if(live && gone === live){ expireUI(); return; }
@@ -274,6 +299,7 @@ function expireUI(){
   if(keepaliveTimer) clearInterval(keepaliveTimer);
   for(const node of nodes){
     if(node.ws){ node.stopped = true; try{ node.ws.close(); }catch(e){} }
+    if(node.ro){ node.ro.disconnect(); node.ro=null; }
     if(node.term){ node.term.dispose(); node.term=null; node.fit=null; }
     node.pod=null; node.ip=null; node.ws=null; node.stopped=false; node.retries=0;
     nodeStatus(node, 'idle', false);
@@ -311,6 +337,7 @@ async function stop(){
     node.stopped = true;
     if(node.ws) try{ node.ws.close(); }catch(e){}
     if(node.pod) try{ await fetch('/api/v1/sessions/'+node.pod, {method:'DELETE'}); }catch(e){}
+    if(node.ro){ node.ro.disconnect(); node.ro=null; }
     if(node.term){ node.term.dispose(); node.term=null; node.fit=null; }
     node.pod=null; node.ip=null; node.stopped=false; node.retries=0;
     nodeStatus(node, 'idle', false);
@@ -322,13 +349,8 @@ async function stop(){
   $('#stop').hidden = true;
 }
 
-// Debounced refit of every open terminal on window resize; xterm's onResize
-// hook above propagates the new cols/rows to the server TTY.
-let refitTimer = null;
-window.addEventListener('resize', () => {
-  clearTimeout(refitTimer);
-  refitTimer = setTimeout(()=>nodes.forEach(n=>n.fit && n.fit.fit()), 150);
-});
+// (Window-resize refitting is handled per-node by the ResizeObserver in
+// makeTerm — the panel box resizes with the window, so no separate handler.)
 
 // --- Click-to-run: .termN fenced blocks paste into terminal N. ---
 function nodeFromTermRef(ref){ // ".term2" or "2" -> node
