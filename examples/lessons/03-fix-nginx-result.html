@@ -19,5 +19,22 @@
     <h1>Success</h1>
     <p>The service is running correctly.</p>
   </div>
+
+  <!-- Exercise proof loader. A real exercise image inherits this from
+       training-exercises-template; the example bakes it in so the demo works
+       end-to-end. When the page is opened via the lesson's "Test Exercise"
+       button (which appends ?hash_code=…&lessonsDomain=…), it pulls
+       exercise-verify.js from the lessons origin, which screenshots this page
+       and submits the capture to the scoring API. Opened directly (no params)
+       it's inert — a plain result page. -->
+  <script>
+    (function () {
+      var d = new URLSearchParams(location.search).get('lessonsDomain');
+      if (!d) return;
+      var s = document.createElement('script');
+      s.src = d.replace(/\/+$/, '') + '/js/exercise-verify.js';
+      document.head.appendChild(s);
+    })();
+  </script>
 </body>
 </html>

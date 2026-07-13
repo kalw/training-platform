@@ -4,6 +4,7 @@
   "description": "Pins the vendored front-end assets (xterm.js & co). Renovate bumps these; `make assets` copies the dist files next to this file for go:embed.",
   "dependencies": {
     "@xterm/addon-fit": "0.10.0",
-    "@xterm/xterm": "5.5.0"
+    "@xterm/xterm": "5.5.0",
+    "html2canvas": "1.4.1"
   }
 }

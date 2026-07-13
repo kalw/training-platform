@@ -78,6 +78,24 @@ the `/scoreboard`. The [Playwright suite](e2e) proves this, and demonstrates
 that the scoring channel *verifies* outcomes but doesn't *prevent* forgery
 (a client can POST a correct hash / screenshot directly, bypassing the UI).
 
+### How an exercise solve is submitted (the proof client)
+
+The exercise's **"Test Exercise"** button opens the *learner's own* result
+page — served by their session Pod on the exercise image's port, reached
+through the exposed-port router — with `?hash_code=…&lessonsDomain=…`
+appended. That page carries a tiny loader (baked into
+`training-exercises-template`, and into the example
+[`03-fix-nginx-result.html`](examples/lessons/03-fix-nginx-result.html)) that
+pulls **`/js/exercise-verify.js`** from the platform. `exercise-verify.js`
+loads the vendored **html2canvas**, screenshots the page at 1024×768, and
+POSTs the capture (a JPEG data-URL) to `/api/v1/challenges/attempt`, which
+perceptual-hashes it against the build-time reference and records the solve.
+Because the result page is a different origin than the platform, the scoring
+API answers the CORS preflight and reflects the origin (with credentials, so
+an authenticated solve still attributes). Both `exercise-verify.js` and
+`html2canvas.min.js` are embedded in the binary (served at `/js/` and
+`/assets/`) and copied into every `training build` output.
+
 ### Legacy formatting options (writing-tutorials.md parity)
 
 The renderer supports the authoring contract of the legacy lessons repo
