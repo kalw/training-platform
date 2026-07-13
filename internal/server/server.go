@@ -29,9 +29,11 @@ var scoreboardPage []byte
 type Config struct {
 	// LessonsDir is the static lesson site root ("" serves a placeholder).
 	LessonsDir string
-	// SessionNamespacePrefix / SessionTTL configure the k8s session engine.
+	// SessionNamespacePrefix / SessionTTL / SessionIdleTTL configure the k8s
+	// session engine (TTL = hard cap; IdleTTL = keepalive sliding window).
 	SessionNamespacePrefix string
 	SessionTTL             time.Duration
+	SessionIdleTTL         time.Duration
 	DefaultInstanceImage   string
 	// TerminalNamespace is where instance Pods live for the terminal bridge.
 	// For the single-namespace default it matches the shim namespace.
@@ -101,6 +103,7 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 	eng, err := session.New(session.Options{
 		NamespacePrefix: cfg.SessionNamespacePrefix,
 		TTL:             cfg.SessionTTL,
+		IdleTTL:         cfg.SessionIdleTTL,
 		DefaultImage:    cfg.DefaultInstanceImage,
 		HostFQDN:        cfg.RouterHost,
 	})

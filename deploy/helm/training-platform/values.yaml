@@ -16,11 +16,13 @@ sessionNamespace: training-sessions
 serve:
   lessonsDir: ""                                   # empty serves a placeholder; mount built lessons here
   sessionNamespacePrefix: "session-"
-  sessionTTL: "4h"
+  sessionTTL: "4h"                                 # hard cap on session lifetime
+  sessionIdleTTL: "10m"                            # pods are reaped this long after the page stops pinging (closed/hidden tab)
   instanceImage: "ghcr.io/kalw/training-console-pwd:dind"
   enableShim: true                                 # keep Docker-in-course working
   salt: ""                                         # scoring salt; must match the lessons build
   baseURL: ""                                      # external origin, for social-login redirect URLs
+  routerHost: ""                                   # public suffix for exposed-port links (e.g. direct.training.example.com); usually matches ingress.wildcardHost
 
 # Social login (GitHub / Google OAuth2). A provider turns on when its
 # client id + secret are both set. Leave all empty for anonymous mode.

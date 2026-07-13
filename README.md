@@ -90,6 +90,7 @@ The renderer supports the authoring contract of the legacy lessons repo
 | `[text](/){:data-term=".termN"}{:data-port="XXXX"}` exposed-port links, plus optional `{:data-host-prefix="p"}` and `{:data-protocol="https:"}` | ✅ rewritten live to `[p-]ip<A-B-C-D>-<id>-<port>.<ROUTER_HOST>` once a session is up (same byte layout as the legacy SDK; protocol defaults to the page's, not the SDK's hardcoded `http:`) |
 | `SESSION_ID` / `PWD_HOST_FQDN` env inside instances (lesson snippets that echo service URLs) | ✅ injected at Pod creation; note the host is now `ip…-….${PWD_HOST_FQDN}` — `ROUTER_HOST` already includes any `direct.` subdomain |
 | `{% quiz %}` / `{% exercise %}` blocks, `exercise_result:` / `exercise_threshold:` | ✅ (same hash contract) |
+| Authored exercise demo links — `{:id="exerciseDemo"}` (or `{:class="exerciseDemo"}` with several): Nth marked link ↔ Nth exercise block | ✅ the marked link becomes the demo link (its `data-port`/href decide where the result page lives, `hash_code` is attached to it) and the exercise's built-in "Test Exercise" button (port 80, `/result.html`) is dropped |
 | `openConsoleTool('nodeN','editor'/'session')` buttons (PWD file editor / session popup) | ❌ legacy console UI, not ported |
 | ssh into an instance (`ssh -p 2223 ip…@direct.…`) | ❌ the k8s engine exposes no sshd |
 
@@ -106,9 +107,13 @@ the reason shown in the panel. The page then:
 - stores Pod names in `sessionStorage`, so a reload **reattaches** to the
   running Pods instead of leaking new ones (state inside the Pod survives;
   the shell is new);
-- pings `POST /api/v1/sessions/{pod}/keepalive` every minute, sliding the
-  TTL forward — deployments can set a short `--session-ttl` and abandoned
-  Pods are GC'd quickly while open tabs live on;
+- pings `POST /api/v1/sessions/{pod}/keepalive` every minute **while the tab
+  is visible**, sliding the Pod's *idle window* (`--session-idle-ttl`,
+  default 10m) forward. Close the tab — or leave it hidden — and the pings
+  stop, so the server GC reaps the Pods after the idle TTL. The *hard* cap
+  (`--session-ttl`, default 4h) is never extended: it bounds total session
+  length. Coming back to a hidden tab pings immediately and either resumes
+  the session or resets the UI if the Pods were reaped;
 - **Stop** deletes the Pods and clears the stored session;
 - reconnects the WebSocket (with backoff) while the Pod is still alive.
 
@@ -185,39 +190,30 @@ against a real cluster with `E2E_CLUSTER=1` (see below).
 The platform deploys only on Kubernetes; any conformant cluster works. Two
 zero-cost local options:
 
-### kind
+### kind — the whole loop is four make targets
 
 ```sh
 kind create cluster --name training
 
-# build the image and load it into the cluster (no registry needed)
-docker build -t training-platform:dev .
-kind load docker-image training-platform:dev --name training
+make dev-deploy     # image build + kind load + lessons render/ConfigMap + helm install/upgrade
+make dev-forward    # http://localhost:8080
 
-helm install training deploy/helm/training-platform \
-  --namespace training --create-namespace \
-  --set image.repository=training-platform --set image.tag=dev \
-  --set image.pullPolicy=IfNotPresent \
-  --set serve.salt=demo-salt
-
-kubectl -n training port-forward svc/training 8080:8080
-# open http://localhost:8080
+# then, while iterating:
+make dev-image      # code changed   -> rebuild image, load, restart
+make dev-lessons    # lessons changed -> re-render, update ConfigMap, restart
+make dev-down       # uninstall the release
 ```
 
-To serve real lessons, render them and mount the output as a ConfigMap:
-
-```sh
-docker run --rm -v "$PWD:/w" -w /w training-platform:dev \
-  build --src examples/lessons --out /w/site --salt demo-salt   # or: make build && ./bin/training build ...
-kubectl -n training create configmap lessons --from-file=site/
-helm upgrade training deploy/helm/training-platform -n training --reuse-values \
-  --set serve.lessonsDir=/lessons --set challengesFile=/lessons/challenges.json \
-  --set 'extraVolumes[0].name=lessons' \
-  --set 'extraVolumes[0].configMap.name=lessons' \
-  --set 'extraVolumeMounts[0].name=lessons' \
-  --set 'extraVolumeMounts[0].mountPath=/lessons' \
-  --set 'extraVolumeMounts[0].readOnly=true'
-```
+Knobs (all overridable): `KIND_CLUSTER=training`, `DEV_NS=training`,
+`DEV_RELEASE=training`, `LESSONS_SRC=examples/lessons`, `DEV_SALT=demo-salt`,
+`DEV_ROUTER_HOST=` (set it to enable exposed-port links). The dev install
+uses [`deploy/helm/dev-values.yaml`](deploy/helm/dev-values.yaml): local
+`training-platform:dev` image, lessons from the `lessons` ConfigMap mounted
+at `/lessons`, a 5m idle TTL, plain-HTTP cookies. The restart on
+`dev-lessons` is what re-seeds the challenge store from `challenges.json`
+(the ConfigMap alone propagates files, not challenges). The `assets/` subdir
+of a built site is not in the ConfigMap (ConfigMaps are flat) — the binary
+serves `/assets/` from its embedded copy.
 
 ### k3s
 

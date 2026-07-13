@@ -1,0 +1,27 @@
+# Values for the local dev loop (`make dev-deploy` on a kind/k3s cluster):
+# locally-built image, lessons served from the `lessons` ConfigMap that
+# `make dev-lessons` (re)creates, plain-HTTP-friendly auth cookies, short
+# idle TTL so abandoned session Pods disappear quickly while iterating.
+image:
+  repository: training-platform
+  tag: dev
+  pullPolicy: IfNotPresent
+
+serve:
+  lessonsDir: /lessons
+  salt: demo-salt
+  sessionIdleTTL: "5m"
+
+challengesFile: /lessons/challenges.json
+
+auth:
+  cookieSecure: false
+
+extraVolumes:
+  - name: lessons
+    configMap:
+      name: lessons
+extraVolumeMounts:
+  - name: lessons
+    mountPath: /lessons
+    readOnly: true

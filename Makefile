@@ -50,9 +50,52 @@ release-build:
 # Local multi-arch image (needs buildx). Override IMG to push elsewhere.
 IMG ?= ghcr.io/kalw/training-platform:$(VERSION)
 image:
-	docker buildx build --platform linux/amd64,linux/arm64 \
+	docker-buildx build --platform linux/amd64,linux/arm64 \
 	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) \
 	  -t $(IMG) .
+
+# ---------------------------------------------------------------------------
+# Local dev loop against a kind cluster (see README "Local dev loop"):
+#   make dev-deploy    everything: image + lessons + helm install/upgrade
+#   make dev-image     code changed  -> rebuild image, load into kind, restart
+#   make dev-lessons   lessons changed -> re-render, update ConfigMap, restart
+#                      (restart re-seeds the challenge store from challenges.json)
+#   make dev-forward   port-forward the platform to http://localhost:8080
+#   make dev-down      uninstall the helm release
+KIND_CLUSTER    ?= training
+DEV_NS          ?= training
+DEV_RELEASE     ?= training
+LESSONS_SRC     ?= examples/lessons
+DEV_SALT        ?= demo-salt
+DEV_ROUTER_HOST ?=
+
+.PHONY: dev-deploy dev-image dev-lessons dev-forward dev-down
+
+dev-image:
+	docker build -t training-platform:dev .
+	kind load docker-image training-platform:dev --name $(KIND_CLUSTER)
+	-kubectl -n $(DEV_NS) rollout restart deployment/$(DEV_RELEASE) 2>/dev/null
+
+dev-lessons: build
+	./bin/$(BINARY) build --src $(LESSONS_SRC) --out site --salt $(DEV_SALT)
+	kubectl create namespace $(DEV_NS) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl -n $(DEV_NS) create configmap lessons --from-file=site/ \
+	  --dry-run=client -o yaml | kubectl apply -f -
+	-kubectl -n $(DEV_NS) rollout restart deployment/$(DEV_RELEASE) 2>/dev/null
+
+dev-deploy: dev-image dev-lessons
+	helm upgrade --install $(DEV_RELEASE) deploy/helm/training-platform \
+	  -n $(DEV_NS) --create-namespace \
+	  -f deploy/helm/dev-values.yaml \
+	  --set serve.salt=$(DEV_SALT) \
+	  $(if $(DEV_ROUTER_HOST),--set serve.routerHost=$(DEV_ROUTER_HOST),)
+	kubectl -n $(DEV_NS) rollout status deployment/$(DEV_RELEASE) --timeout=120s
+
+dev-forward:
+	kubectl -n $(DEV_NS) port-forward svc/$(DEV_RELEASE) 8080:8080
+
+dev-down:
+	-helm -n $(DEV_NS) uninstall $(DEV_RELEASE)
 
 clean:
 	rm -rf bin dist

@@ -21,6 +21,13 @@ uname -a
 ls /
 ```
 
+## Exposing ports
+
+Anything your session serves can be linked with a port link — once the
+session is up, [open your app](/){:data-term=".term1"}{:data-port="8080"}{:data-host-prefix="app"}{:data-protocol="https:"}
+is rewritten to the session's exposed-port URL
+(`https://app-ip<A-B-C-D>-<id>-8080.<router host>/`).
+
 ## What just happened
 
 - the page called `POST /api/v1/sessions`, which created a Pod in the
