@@ -111,8 +111,12 @@ the cluster-gated Playwright terminal test at either with
 
 `docs/demo.svg` is one self-contained animated SVG with three timed slides:
 the terminal cast (a real `build` + `serve` run), then the lesson page, then
-the scoreboard. The master loop is exactly 3× the cast duration so the
-cast's own animation stays phase-aligned across loops. Inputs live in
+the scoreboard. The screenshots hold for **half** the cast's duration each —
+they're single stills, so they read instantly, while the cast needs its full
+length to type through. That also keeps the master loop a whole multiple of
+the cast duration (2×), which matters: the cast has its own infinite
+animation, and only a whole-multiple loop keeps the two phase-aligned
+forever. Slide weights live in `WEIGHTS` in the composer. Inputs live in
 `docs/` (`demo.cast`, `shot-lesson.png`, `shot-scoreboard.png`); the
 screenshots are headless-Chrome captures of the served example site (poll
 for the output file, then kill Chrome — it doesn't exit on its own).
