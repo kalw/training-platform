@@ -10,7 +10,7 @@ Course content still runs **Docker** — learners open DinD sessions and type
 *deployed*, not what a session can do.
 
 The design and the experiments this is built on are in
-[`../training-deployment/K8S-SANDBOX-DESIGN.md`](../training-deployment/K8S-SANDBOX-DESIGN.md):
+[`K8S-SANDBOX-DESIGN.md`](K8S-SANDBOX-DESIGN.md):
 the Docker-Engine-API→Kubernetes shim (proven against `kind` and a real
 unmodified Play-With-Docker console), the in-cluster router that reaches
 session Pods with no per-session network attachment, and the hash-based
@@ -30,6 +30,12 @@ scoring contract.
 | **Content** | `internal/content` | `training build`: renders Markdown lessons (front matter + `{% quiz %}` / `{% exercise %}` blocks) into PWD-compatible HTML **and** imports the challenges. Exercise flags are the perceptual hash (dHash) of the expected result page, rendered headlessly at build time. |
 
 ## Authoring lessons (`training build`)
+
+> Full authoring reference: **[WRITING-LESSONS.md](WRITING-LESSONS.md)** —
+> front matter, the supported Markdown subset, terminals and `.termN` blocks,
+> exposed-port links, quizzes, exercises and how to choose a grading
+> mechanism. Consolidating the old repos:
+> **[MIGRATION.md](MIGRATION.md)**.
 
 Lessons are Markdown with YAML front matter and two block types:
 
