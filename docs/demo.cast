@@ -1,0 +1,9 @@
+{"version":3,"term":{"cols":90,"rows":12},"timestamp":1784555055,"command":"bash /tmp/demo.sh","env":{"SHELL":"/bin/zsh"}}
+[0.426, "o", "\u001b[1;32m$\u001b[0m training build --src lessons --out site\r\n"]
+[0.769, "o", "training: rendered 3 lesson(s), 2 challenge(s) -> site (challenges.json included)\r\n"]
+[1.209, "o", "\u001b[1;32m$\u001b[0m training serve --lessons-dir site \\\r\n"]
+[0.711, "o", "      --challenges-file site/challenges.json --solves-file solves.jsonl\r\n"]
+[0.725, "o", "scoring: loaded 2 challenge(s)\r\n"]
+[0.000, "o", "scoring: solves persisted to solves.jsonl (recovered 0)\r\n"]
+[0.003, "o", "serving on :8099 (shim=false)\r\n"]
+[3.631, "x", "0"]
