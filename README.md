@@ -343,6 +343,23 @@ helm upgrade --install training deploy/helm/training-platform \
 completion) on top of the per-solve list; the same data is at
 `GET /api/v1/standings`.
 
+### Who a solve belongs to
+
+With social login configured, solves attribute to the real account. Without
+it, every browser is still given its **own random, memorable learner name** —
+`clever-marten-077` — kept in a long-lived cookie, so a classroom shows up as
+distinct rows instead of collapsing into one `anonymous` entry, and progress
+is stable across page loads and platform restarts. The page tells learners
+which name they are (`you are …` on `/scoreboard`, `user` in
+`GET /api/v1/config`).
+
+This is **identification, not authentication**: the cookie is unsigned, so a
+learner could set it to another name — just as they could POST a correct
+answer hash directly (the e2e suite demonstrates both). Use social login when
+attribution has to be trustworthy. Names coming back from a cookie are
+validated against the generated shape, so nothing arbitrary reaches the
+shared scoreboard.
+
 ## Deploy (Kubernetes only)
 
 A Helm chart is in [`deploy/helm/training-platform`](deploy/helm/training-platform):
