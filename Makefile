@@ -11,7 +11,7 @@ LDFLAGS     := -s -w \
 # OS/arch matrix for `make release-build`.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: all build test vet lint tidy run clean release-build image assets
+.PHONY: all build test vet lint tidy run clean release-build image assets chart-lint chart-package
 
 all: vet test build
 
@@ -26,6 +26,22 @@ vet:
 
 tidy:
 	go mod tidy
+
+CHART := deploy/helm/training-platform
+
+# Validate the chart exactly as CI does (lint + render the value permutations).
+chart-lint:
+	helm lint $(CHART)
+	helm lint --strict $(CHART)
+	helm template t $(CHART) > /dev/null
+	helm template t $(CHART) --set ingress.enabled=true --set ingress.host=training.example.com \
+	  --set persistence.enabled=true --set serve.routerHost=direct.training.example.com \
+	  --set serve.salt=ci > /dev/null
+	helm template t $(CHART) -f deploy/helm/dev-values.yaml > /dev/null
+
+# Package the chart locally. CI publishes it to oci://ghcr.io/kalw/charts on tags.
+chart-package:
+	helm package $(CHART) --destination dist
 
 # Refresh the vendored front-end assets (xterm.js & co) from the npm pins in
 # internal/content/assets/package.json (+ lockfile, integrity-verified by

@@ -1,13 +1,38 @@
 # Deploy (Kubernetes only)
 
-A Helm chart is in
-[`deploy/helm/training-platform`](../deploy/helm/training-platform):
+## Install from the published chart
+
+The chart is published to GHCR as an OCI artifact on every `v*` tag — the
+same registry and credentials as the container image, so there is no
+`gh-pages` branch or chart index to maintain:
+
+```sh
+helm install training oci://ghcr.io/kalw/charts/training-platform --version 0.1.0 \
+  --namespace training --create-namespace \
+  --set serve.salt=$CTFD_SALT \
+  --set ingress.enabled=true --set ingress.host=training.example.com \
+  --set persistence.enabled=true          # durable solves (recommended)
+```
+
+The chart version equals the release tag, and its `appVersion` pins the
+image built from that same tag — so `--version 0.1.0` gets you the `0.1.0`
+platform image by default. List what's available with:
+
+```sh
+helm show chart oci://ghcr.io/kalw/charts/training-platform --version 0.1.0
+```
+
+> Like other new GHCR packages, `charts/training-platform` is **private on
+> first publish** — flip it public by hand in the GitHub UI (Package settings
+> → Danger Zone), or `helm registry login ghcr.io` before installing.
+
+## Install from a checkout
 
 ```sh
 helm install training deploy/helm/training-platform \
   --set serve.salt=$CTFD_SALT \
   --set ingress.enabled=true --set ingress.host=training.example.com \
-  --set persistence.enabled=true          # durable solves (recommended)
+  --set persistence.enabled=true
 ```
 
 It renders a Deployment (unprivileged, read-only rootfs, drops all caps), a
@@ -43,3 +68,22 @@ means restarting the container, not rebuilding the image.
 The solve log is one append-only file on a `ReadWriteOnce` claim with a
 single writer — this is a single-replica design. Scaling the Deployment past
 1 needs a different persistence mechanism first.
+
+## One release per cluster (by default)
+
+The chart creates the session Namespace (`sessionNamespace`, default
+`training-sessions`) and Helm records ownership on it, so a second release
+installed with the defaults fails with an "invalid ownership metadata"
+error. That's intentional — one platform per cluster is the normal case. To
+run two side by side (e.g. staging next to a demo), give each its own:
+
+```sh
+--set sessionNamespace=demo-sessions
+```
+
+## Chart CI
+
+`helm lint` (plain and `--strict`) plus `helm template` under several value
+permutations — default, ingress + persistence + router, and the dev values —
+run on every push and PR, so a broken template fails before it ships.
+Packaging and publishing happen only on tags.
