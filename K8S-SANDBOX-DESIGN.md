@@ -66,7 +66,7 @@ translation overhead (see Gaps) becomes the bottleneck.
 - Cluster: any conformant Kubernetes (kubeadm, EKS/GKE/AKS). Drops the
   hard swarm-mode + `xt_ipvs` kernel module requirement entirely — that
   requirement is Ansible/compose-specific
-  ([`pre_docker.yml`](roles/learningtools_migration/tasks/pre_docker.yml)),
+  ([`pre_docker.yml`](https://github.com/kalw/training-deployment/blob/main/roles/learningtools_migration/tasks/pre_docker.yml)),
   not present in the Helm path.
 - Shim: `Deployment` + `Service` (ClusterIP, e.g. `docker-shim.pwd.svc`) in
   a dedicated namespace, with a `ServiceAccount` bound to a `Role`/
@@ -76,7 +76,7 @@ translation overhead (see Gaps) becomes the bottleneck.
 - Console: `charts/training-platform` already has the plug point —
   `console.pwd.dockerHost` → `tcp://docker-shim.pwd.svc:2375`. This drops
   the chart's current privileged/hostPath branch
-  ([`templates/console.yaml`](charts/training-platform/templates/console.yaml))
+  ([`templates/console.yaml`](https://github.com/kalw/training-deployment/blob/main/charts/training-platform/templates/console.yaml))
   entirely; the console pod becomes unprivileged.
 - Session pods still need `privileged: true` (nested dockerd for `docker
   build`/`docker swarm init` lessons) — that privilege moves from the

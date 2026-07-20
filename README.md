@@ -1,48 +1,59 @@
 # training-platform
 
-The training platform as **one Go binary**, deployed **only on Kubernetes**.
+[![CI](https://github.com/kalw/training-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/kalw/training-platform/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/kalw/training-platform?sort=semver&logo=github)](https://github.com/kalw/training-platform/releases/latest)
+[![Go version](https://img.shields.io/github/go-mod/go-version/kalw/training-platform?logo=go)](go.mod)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kalw/training-platform)](https://goreportcard.com/report/github.com/kalw/training-platform)
+[![Image](https://img.shields.io/badge/ghcr.io-kalw%2Ftraining--platform-blue?logo=docker&logoColor=white)](https://github.com/kalw/training-platform/pkgs/container/training-platform)
 
-It consolidates the server-side functionality that used to be spread across
-six repos (a Go console, a JS SDK, a patched Python CTFd, Jekyll plugins,
-Ansible, Helm) into a single statically-linked program with subcommands.
-Course content still runs **Docker** — learners open DinD sessions and type
-`docker` commands — the "Kubernetes-only" rule is about how the platform is
-*deployed*, not what a session can do.
+A self-hosted, Katacoda-style hands-on training platform as **one Go
+binary**, deployed **only on Kubernetes**: Markdown lessons with live
+in-browser Docker terminals, quizzes and exercises graded server-side, and a
+class scoreboard.
 
-The design and the experiments this is built on are in
-[`K8S-SANDBOX-DESIGN.md`](K8S-SANDBOX-DESIGN.md):
-the Docker-Engine-API→Kubernetes shim (proven against `kind` and a real
-unmodified Play-With-Docker console), the in-cluster router that reaches
-session Pods with no per-session network attachment, and the hash-based
-scoring contract.
+![demo](docs/demo.svg)
 
-## What's in the binary
+- **One binary, one image** — lessons site, session engine, terminals,
+  scoring, exposed-port router and a Docker-Engine-API shim, replacing a
+  six-repo / three-language stack (Go console fork, JS SDK, patched CTFd,
+  Jekyll plugins, Ansible, Helm)
+- **Real sandboxes** — each learner gets privileged DinD Pods; they type
+  `docker` commands in an xterm.js terminal bridged to `pods/exec`
+- **Honest grading** — quiz answers only ever leave the page as salted
+  hashes; exercises are verified **server-side** by fetching the learner's
+  own service (or by perceptual-hash screenshot proof for visual results)
+- **No database** — challenges re-seed from the build at boot; solves persist
+  in an append-only JSON-lines log on a tiny PVC
+- **Session hygiene** — idle sessions are garbage-collected minutes after
+  the tab closes; a hard TTL bounds everything
 
-| Surface | Package | What it does |
-|---|---|---|
-| **Docker shim** | `internal/dockershim` | Serves a subset of the Docker Engine API backed by Kubernetes (containers→Pods, exec/attach→pods/exec/attach). Keeps "play with docker" content working. Ported verbatim from the proven PoC. |
-| **Session engine** | `internal/session` | Kubernetes-native sandboxes: a session is a labelled Namespace, an instance is a privileged Pod. TTL-based GC. |
-| **Terminals** | `internal/terminal` | Browser WebSocket ⇄ `pods/exec` (SPDY) — the in-browser shell. |
-| **Scoring** | `internal/scoring` | The `sha256(question+filename)` / `sha256(answer+salt)` contract, an in-memory challenge store, and the `/api/v1/challenges/{hash,attempt}` endpoints. Replaces the patched CTFd. |
-| **Router** | `internal/router` | Exposed-port routing: decodes `ip<A-B-C-D>-<session>...` hosts and proxies to the Pod IP. Runs in-cluster, where Pod IPs are directly routable. |
-| **Lessons** | `internal/lessons` | Serves the pre-rendered static lesson site. |
-| **Auth** | `internal/auth` | Social login (GitHub / Google OAuth2) with a signed session cookie; attributes solves to a real user. Anonymous when unconfigured. |
-| **Content** | `internal/content` | `training build`: renders Markdown lessons (front matter + `{% quiz %}` / `{% exercise %}` blocks) into PWD-compatible HTML **and** imports the challenges. Exercise flags are the perceptual hash (dHash) of the expected result page, rendered headlessly at build time. |
+## See it
 
-## Authoring lessons (`training build`)
+![index](docs/shot-index.png)
 
-> Full authoring reference: **[WRITING-LESSONS.md](WRITING-LESSONS.md)** —
-> front matter, the supported Markdown subset, terminals and `.termN` blocks,
-> exposed-port links, quizzes, exercises and how to choose a grading
-> mechanism. Consolidating the old repos:
-> **[MIGRATION.md](MIGRATION.md)**.
+| Lesson: terminal + quiz | Scoreboard: standings & completion |
+|---|---|
+| ![lesson](docs/shot-lesson.png) | ![scoreboard](docs/shot-scoreboard.png) |
 
-Lessons are Markdown with YAML front matter and two block types:
+## Quickstart
+
+With a [kind](https://kind.sigs.k8s.io) cluster and this repo, the whole
+loop is four make targets:
+
+```sh
+kind create cluster --name training
+
+make dev-deploy     # build image + kind load + render lessons + helm install
+make dev-forward    # open http://localhost:8080
+```
+
+Write a lesson in Markdown, and the build renders the page **and** registers
+its challenges in the same pass:
 
 ```markdown
 ---
 title: Containers — quiz
-image: busybox:1.36          # boots the session instance for this lesson
+image: busybox:1.36            # boots the learner's session Pod
 ---
 # Listing containers
 
@@ -53,352 +64,52 @@ Which command lists the running containers?
 {% endquiz %}
 ```
 
-Exercises declare a reference **result page**; its perceptual hash is computed
-at build time (never hand-written):
-
-```markdown
----
-image: ghcr.io/kalw/my-broken-nginx:latest   # custom image FROM training-exercises-template
-exercise_result: 03-fix-nginx-result.html    # rendered headlessly, dHashed -> phash flag
-exercise_threshold: 12
----
-{% exercise %}
-Fix the web server so the status page renders correctly.
-{% endexercise %}
+```sh
+training build --src lessons --out site --salt "$CTFD_SALT"
+training serve --lessons-dir site --challenges-file site/challenges.json \
+               --solves-file solves.jsonl
 ```
 
-`training build --src examples/lessons --out site --salt "$CTFD_SALT"` renders
-each lesson to `site/<slug>.html`, writes `site/index.html`, and emits
-`site/challenges.json` — the one artifact `serve` seeds scoring from. The
-Markdown→HTML render and the challenge import are the **same pass**, so the
-page DOM and the challenge store can never disagree on a hash. Exercise
-grading needs headless Chrome/Chromium at build time (auto-detected, or
-`CHROME_BIN`); an `exercise_result:` that's a `.png`/`.jpg` is hashed
-directly with no browser.
-
-See [`examples/lessons`](examples/lessons) for a plain, a quiz, and an
-exercise lesson. The quiz/exercise pages only ever confirm that an answer was
-*submitted* — never whether it was correct — so the UI can't be used to
-brute-force the answer (each choice's hash is in the DOM); outcomes live on
-the `/scoreboard`. The [Playwright suite](e2e) proves this, and demonstrates
-that the scoring channel *verifies* outcomes but doesn't *prevent* forgery
-(a client can POST a correct hash / screenshot directly, bypassing the UI).
-
-### How an exercise is graded
-
-There are two mechanisms, and **which one applies depends on the lesson**:
-
-| | server-side content check | screenshot proof (phash) |
-|---|---|---|
-| **Turned on by** | `exercise_expect:` / `exercise_expect_regex:` | nothing (the default) |
-| **Proves** | exactly what the page **says** | the page's coarse **layout** |
-| **Produced by** | the platform, fetching the learner's Pod | the learner's browser |
-| **Forgeable by the client** | no | yes |
-
-**Prefer the content check.** A dHash cannot see text: measured on the example
-result page, rewriting *every string on it* moves ~1% of the hash bits even at
-a 32×32 grid — below the noise floor you must tolerate across renderers. So a
-perceptual match proves the service came up and rendered the expected shape,
-**not** that it says the right thing. Add an assertion when the content
-matters:
+Exercises boot a deliberately broken image the learner must repair, and are
+graded by the platform **fetching the learner's own service** and asserting
+its content — the browser can't fake it:
 
 ```yaml
-exercise_expect: "The service is running correctly"   # substring
-# or
-exercise_expect_regex: "Success|healthy"
+image: ghcr.io/kalw/my-broken-nginx:latest
+exercise_expect: "The service is running correctly"
 ```
 
-The platform then fetches the result page **from the learner's own session
-Pod** — in-cluster, the same direct Pod-IP routability the port router uses —
-and asserts the body. `POST /api/v1/challenges/verify {challenge_hash, pod}`;
-the **port and path come from the challenge** (built from the exercise's demo
-routing), never from the request, and the pod is checked against the session
-engine before dialing, so the endpoint can't be steered at anything but the
-caller's own session. Responses are capped and redirects are not followed.
-Keep phash for exercises whose proof is genuinely visual, or whose result page
-is client-rendered (the server fetch sees raw HTML, it runs no JS).
+## What's in the binary
 
-### How an exercise solve is submitted (the screenshot proof client)
+| Surface | Package | What it does |
+|---|---|---|
+| **Session engine** | `internal/session` | Kubernetes-native sandboxes: instances are privileged Pods; idle + hard TTL GC |
+| **Terminals** | `internal/terminal` | Browser WebSocket ⇄ `pods/exec` (SPDY), with TTY resize |
+| **Scoring** | `internal/scoring` | Hash contract, server-side content verification, phash screenshot grading, durable solve log, standings |
+| **Router** | `internal/router` | Exposed-port routing: `ip<A-B-C-D>-<id>-<port>.<host>` → Pod IP, in-cluster |
+| **Docker shim** | `internal/dockershim` | A subset of the Docker Engine API backed by Kubernetes — Docker tooling keeps working |
+| **Content** | `internal/content` | `training build`: Markdown + `{% quiz %}`/`{% exercise %}` → HTML + `challenges.json`, one pass |
+| **Lessons / Auth** | `internal/lessons`, `internal/auth` | Static site serving; GitHub/Google login, or per-browser random learner names |
 
-The exercise's **"Test Exercise"** button opens the *learner's own* result
-page — served by their session Pod on the exercise image's port, reached
-through the exposed-port router — with `?hash_code=…&lessonsDomain=…`
-appended. That page carries a tiny loader (baked into
-`training-exercises-template`, and into the example
-[`03-fix-nginx-result.html`](examples/lessons/03-fix-nginx-result.html)) that
-pulls **`/js/exercise-verify.js`** from the platform. `exercise-verify.js`
-loads the vendored **html2canvas**, screenshots the page at 1024×768, and
-POSTs the capture (a JPEG data-URL) to `/api/v1/challenges/attempt`, which
-perceptual-hashes it against the build-time reference and records the solve.
-Because the result page is a different origin than the platform, the scoring
-API answers the CORS preflight and reflects the origin (with credentials, so
-an authenticated solve still attributes). Both `exercise-verify.js` and
-`html2canvas.min.js` are embedded in the binary (served at `/js/` and
-`/assets/`) and copied into every `training build` output.
+## Documentation
 
-### Legacy formatting options (writing-tutorials.md parity)
-
-The renderer supports the authoring contract of the legacy lessons repo
-(`training-lessons-ps/writing-tutorials.md`):
-
-| Feature | Status |
+| Doc | What's in it |
 |---|---|
-| `terms:` front matter (0–6 terminal windows, one instance Pod each, PWD "node" semantics) | ✅ default 1; `0` = no console |
-| ` ```.termN ` code blocks (click-to-run in terminal N) | ✅ |
-| `[text](/){:data-term=".termN"}{:data-port="XXXX"}` exposed-port links, plus optional `{:data-host-prefix="p"}` and `{:data-protocol="https:"}` | ✅ rewritten live to `[p-]ip<A-B-C-D>-<id>-<port>.<ROUTER_HOST>` once a session is up (same byte layout as the legacy SDK; protocol defaults to the page's, not the SDK's hardcoded `http:`) |
-| `SESSION_ID` / `PWD_HOST_FQDN` env inside instances (lesson snippets that echo service URLs) | ✅ injected at Pod creation; note the host is now `ip…-….${PWD_HOST_FQDN}` — `ROUTER_HOST` already includes any `direct.` subdomain |
-| `{% quiz %}` / `{% exercise %}` blocks, `exercise_result:` / `exercise_threshold:` | ✅ (same hash contract) |
-| Authored exercise demo links — `{:id="exerciseDemo"}` (or `{:class="exerciseDemo"}` with several): Nth marked link ↔ Nth exercise block | ✅ every exercise always renders a **"Test Exercise"** submit button; the marked link *supplies its routing* (adopts `data-port`, href→result-page path, `data-term`, `data-host-prefix`, `data-protocol`) — so the button opens the right result page (often a non-80 port) — while the marked link stays inline as a plain preview. No mark → the button uses the defaults (port 80, `/result.html`) |
-| `openConsoleTool('nodeN','editor'/'session')` buttons (PWD file editor / session popup) | ❌ legacy console UI, not ported |
-| ssh into an instance (`ssh -p 2223 ip…@direct.…`) | ❌ the k8s engine exposes no sshd |
+| [WRITING-LESSONS.md](WRITING-LESSONS.md) | **Authoring**: front matter, Markdown subset, terminals, `.termN` blocks, port links, quizzes, exercises, grading choice |
+| [docs/SCORING.md](docs/SCORING.md) | Grading in depth, the proof client, durable solves, learner identity |
+| [docs/RUNTIME.md](docs/RUNTIME.md) | The lesson page at runtime: session lifecycle, keepalive/GC, routing, legacy parity, vendored assets |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build, test (unit + Playwright e2e), the kind/k3s dev loop |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | The Helm chart: ingress, RBAC, persistence, security posture |
+| [DESIGN.md](DESIGN.md) | Why one binary; the proven primitives it's built on |
+| [K8S-SANDBOX-DESIGN.md](K8S-SANDBOX-DESIGN.md) | The shim/router experiments behind the design |
+| [MIGRATION.md](MIGRATION.md) | Consolidation status of the six legacy repos, and what's deliberately out of scope |
 
-### Terminals & session lifecycle (what the rendered page does)
-
-Lesson pages embed [xterm.js](https://xtermjs.org) terminals (vendored, see
-below). **Start session** boots one instance Pod per terminal and waits for
-Running — pods that can never start (e.g. `ImagePullBackOff`) fail fast with
-the reason shown in the panel. The page then:
-
-- bridges each terminal to `/terminals/{pod}` (binary frames = TTY bytes,
-  text frames = JSON control, currently `{"type":"resize","cols","rows"}` —
-  the server drives the exec TTY size through a `TerminalSizeQueue`);
-- stores Pod names in `sessionStorage`, so a reload **reattaches** to the
-  running Pods instead of leaking new ones (state inside the Pod survives;
-  the shell is new);
-- pings `POST /api/v1/sessions/{pod}/keepalive` every minute **while the tab
-  is visible**, sliding the Pod's *idle window* (`--session-idle-ttl`,
-  default 10m) forward. Close the tab — or leave it hidden — and the pings
-  stop, so the server GC reaps the Pods after the idle TTL. The *hard* cap
-  (`--session-ttl`, default 4h) is never extended: it bounds total session
-  length. Coming back to a hidden tab pings immediately and either resumes
-  the session or resets the UI if the Pods were reaped;
-- **Stop** deletes the Pods and clears the stored session;
-- reconnects the WebSocket (with backoff) while the Pod is still alive.
-
-Sessions API: `POST /api/v1/sessions` (create, returns
-`pod`/`ip`/`expires_at`), `GET /api/v1/sessions/{pod}` (phase/ready/reason),
-`DELETE /api/v1/sessions/{pod}`, `POST /api/v1/sessions/{pod}/keepalive`.
-`GET /api/v1/config` serves runtime page config (`router_host` from
-`ROUTER_HOST` / `--router-host`), keeping pages build-once/deploy-anywhere.
-
-When `--router-host` is set, `serve` **also answers for exposed-port hosts
-itself**: a request whose Host is `ip<A-B-C-D>-<id>[-port].<router host>` is
-proxied straight to that Pod IP (the composed server runs in-cluster, where
-Pod IPs are routable). Point a wildcard ingress (`*.<router host>`) at the
-same Service and `{:data-port=}` links work with no extra deployment; the
-standalone `training router` remains for scaled setups.
-
-### Vendored front-end assets
-
-xterm.js and its fit addon are pinned as ordinary npm dependencies in
-[`internal/content/assets/package.json`](internal/content/assets/package.json)
-(+ lockfile) — the standard manager surface, so **Renovate upgrades them like
-any npm project** (grouped by [`renovate.json`](renovate.json)). `make assets`
-runs `npm ci` (lockfile-integrity-verified) and copies the dist files next to
-the manifest for `go:embed`; the committed copies are enforced against the
-pins by a CI check, and the [`assets-sync`](.github/workflows/assets-sync.yml)
-workflow regenerates them automatically on Renovate's PRs. The files are
-embedded in the binary (served at `/assets/`, no CDN at runtime) **and**
-copied into every `training build` output so a built site is self-contained.
-To upgrade manually: bump the pin, `make assets`, commit both.
-
-Everything is wired together by `internal/server` and driven by the
-`cmd/training` CLI.
-
-## Usage
-
-```
-training serve    [flags]   run the composed platform on one port (default :8080)
-training shim     [flags]   run only the Docker-API → Kubernetes shim (default :2375)
-training router   [flags]   run only the exposed-port router (default :8090)
-training version            print build info
-```
-
-`serve` mounts everything: lessons at `/`, scoring at `/api/v1/challenges/`,
-terminals at `/terminals/{pod}`, and (with `--enable-shim`, on by default)
-the Docker API under `/docker/`. Flags mirror env vars (`LESSONS_DIR`,
-`INSTANCE_IMAGE`, `ENABLE_SHIM`, `CTFD_SALT`, …).
-
-## Build
-
-Pure Go, no cgo — cross-compiles to every target with no C toolchain.
+## Contributing
 
 ```sh
-make build           # ./bin/training for the host
-make test            # go vet + go test -race
-make release-build   # dist/ binaries for linux/darwin/windows × amd64/arm64
-make image           # multi-arch container (needs buildx)
-```
-
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs vet + race
-tests + a gofmt check, cross-compiles the full OS/arch matrix on every push
-and PR, runs the Playwright e2e suite in Docker, builds a multi-arch
-(`linux/amd64,linux/arm64`) image to GHCR on `main`/tags, and cuts a
-goreleaser release (binaries for all targets + checksums) on `v*` tags.
-
-## Testing
-
-```sh
-make test                              # Go: vet + race unit/integration tests
+make test                                    # go vet + race tests
 docker build -f e2e/Dockerfile -t training-e2e . && docker run --rm training-e2e
 ```
 
-The end-to-end tests are [Playwright](e2e) and run **fully self-contained in
-Docker** — no local Node or Chrome needed, no Kubernetes cluster required.
-They cover the lesson UI (Markdown rendering), the quiz submitted-only
-behaviour, forged API calls (correct quiz hash / exercise screenshot posted
-directly), and the scoreboard. The terminal spec is cluster-gated: run it
-against a real cluster with `E2E_CLUSTER=1` (see below).
-
-## Run locally on kind or k3s
-
-The platform deploys only on Kubernetes; any conformant cluster works. Two
-zero-cost local options:
-
-### kind — the whole loop is four make targets
-
-```sh
-kind create cluster --name training
-
-make dev-deploy     # image build + kind load + lessons render/ConfigMap + helm install/upgrade
-make dev-forward    # http://localhost:8080
-
-# then, while iterating:
-make dev-image      # code changed   -> rebuild image, load, restart
-make dev-lessons    # lessons changed -> re-render, update ConfigMap, restart
-make dev-down       # uninstall the release
-```
-
-Knobs (all overridable): `KIND_CLUSTER=training`, `DEV_NS=training`,
-`DEV_RELEASE=training`, `LESSONS_SRC=examples/lessons`, `DEV_SALT=demo-salt`,
-`DEV_ROUTER_HOST=` (overrides the dev default). The dev install
-uses [`deploy/helm/dev-values.yaml`](deploy/helm/dev-values.yaml): local
-`training-platform:dev` image, lessons from the `lessons` ConfigMap mounted
-at `/lessons`, a 5m idle TTL, plain-HTTP cookies, and
-`routerHost: direct.127.0.0.1.sslip.io:8080` — so `{:data-port=}` links work
-straight through `make dev-forward`: the sslip.io wildcard resolves to
-127.0.0.1, the port-forward carries the request in, and `serve` proxies to
-the Pod IP encoded in the hostname (needs internet DNS for sslip.io). The restart on
-`dev-lessons` is what re-seeds the challenge store from `challenges.json`
-(the ConfigMap alone propagates files, not challenges). The `assets/` subdir
-of a built site is not in the ConfigMap (ConfigMaps are flat) — the binary
-serves `/assets/` from its embedded copy.
-
-### k3s
-
-```sh
-curl -sfL https://get.k3s.io | sh -      # single-node k3s
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml   # (sudo chmod +r it, or copy to ~/.kube/config)
-
-# k3s uses containerd, not Docker — import the image straight into it
-docker build -t training-platform:dev .
-docker save training-platform:dev | sudo k3s ctr images import -
-
-helm install training deploy/helm/training-platform \
-  --namespace training --create-namespace \
-  --set image.repository=training-platform --set image.tag=dev \
-  --set image.pullPolicy=IfNotPresent \
-  --set serve.salt=demo-salt
-# k3s ships Traefik; set ingress.enabled=true + ingress.host to expose it,
-# or port-forward as above.
-```
-
-Both give the platform a Service account with the least-privilege RBAC the
-chart defines, and a `training-sessions` namespace where privileged DinD
-session Pods are allowed (Pod Security scoped to that namespace only). Point
-the cluster-gated Playwright terminal test at either with
-`E2E_CLUSTER=1 E2E_PORT=8080 npx playwright test tests/terminal.spec.ts`
-(from `e2e/`, against a running `port-forward`).
-
-## Scoring persistence (solves)
-
-Challenges are re-seeded from the build's `challenges.json` at every boot, so
-the only state worth keeping is **solves**. A solve is a tiny, append-only,
-idempotent fact, so persistence is an **append-only JSON-lines file** rather
-than a database:
-
-```sh
-training serve --solves-file /data/solves.jsonl     # or SOLVES_FILE=…
-```
-
-Each record is fsync'd before the request returns, and the log is replayed at
-boot (`scoring: solves persisted to … (recovered N)`). A crash-torn final line
-is skipped rather than failing the boot, and the tail is healed on open so the
-next append can't merge into it. The file stays readable with `cat`.
-
-**Without it, solves live in memory and are lost on restart** — fine for CI
-and content authoring, lossy for a real class. The boot log always states
-which mode is active.
-
-On Kubernetes, turn it on in the chart (it provisions a small PVC, annotated
-`helm.sh/resource-policy: keep` so `helm uninstall` doesn't bin learner
-progress):
-
-```sh
-helm upgrade --install training deploy/helm/training-platform \
-  --set persistence.enabled=true --set persistence.size=1Gi
-```
-
-`/scoreboard` shows the **global standings** (ranking by points, per-challenge
-completion) on top of the per-solve list; the same data is at
-`GET /api/v1/standings`.
-
-### Who a solve belongs to
-
-With social login configured, solves attribute to the real account. Without
-it, every browser is still given its **own random, memorable learner name** —
-`clever-marten-077` — kept in a long-lived cookie, so a classroom shows up as
-distinct rows instead of collapsing into one `anonymous` entry, and progress
-is stable across page loads and platform restarts. The page tells learners
-which name they are (`you are …` on `/scoreboard`, `user` in
-`GET /api/v1/config`).
-
-This is **identification, not authentication**: the cookie is unsigned, so a
-learner could set it to another name — just as they could POST a correct
-answer hash directly (the e2e suite demonstrates both). Use social login when
-attribution has to be trustworthy. Names coming back from a cookie are
-validated against the generated shape, so nothing arbitrary reaches the
-shared scoreboard.
-
-## Deploy (Kubernetes only)
-
-A Helm chart is in [`deploy/helm/training-platform`](deploy/helm/training-platform):
-
-```sh
-helm install training deploy/helm/training-platform \
-  --set serve.salt=$CTFD_SALT \
-  --set ingress.enabled=true --set ingress.host=training.example.com
-```
-
-It renders a Deployment (unprivileged, read-only rootfs, drops all caps), a
-Service, optional Ingress (including the `*.direct.<domain>` wildcard for the
-port router), and **least-privilege RBAC**: a cluster-scoped Role for
-Namespace lifecycle + GC, and a namespaced Role for `pods` / `pods/exec` /
-`pods/attach` / `pods/log` confined to the session namespace. Privileged
-session Pods (nested dockerd) are permitted **only** in that one namespace
-via Pod Security Admission — never cluster-wide.
-
-## Scope / status
-
-Real and tested here: the Docker shim (ported from the validated PoC), the
-scoring contract (unit + HTTP integration tests), the router host-decoder
-(kept byte-compatible with the legacy console, unit-tested), the k8s session
-engine (pod lifecycle unit-tested against a fake clientset), the terminal
-bridge with TTY resize, the lessons build (renderer unit tests + Playwright
-UI suite), and the browser session lifecycle (verified live against kind:
-boot → resize → click-to-run → reload-reattach → stop).
-
-### Relationship to `training-console-pwd` / the JS SDK
-
-What was worth reusing from the legacy console has been ported, not
-rewritten from scratch: the Docker shim comes verbatim from the proven PoC,
-the router keeps the console's host encoding byte-compatible, and the lesson
-page implements the SDK's behavioural contract (terms, click-to-run,
-data-port links, resize, close). The SDK's *code* is not vendored — it is
-frozen on xterm 2.9.2 / webpack 2 / Node 8 and drags a session protocol
-(socket.io-style events, Swarm-era instance API) this platform replaces with
-plain WebSocket + `pods/exec`. Server-side, the PWD session manager is
-Docker/Swarm-centric by design; the k8s-native engine here is its deliberate
-replacement, not a fork. Features that still only exist in the legacy
-console (file-editor popup, ssh gateway, uploads) stay there — port them
-behind the same lifecycle endpoints if course content needs them.
+Pure Go, no cgo; the e2e suite is Playwright, fully self-contained in Docker.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
