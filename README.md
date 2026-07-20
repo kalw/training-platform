@@ -27,14 +27,6 @@ class scoreboard.
 - **Session hygiene** — idle sessions are garbage-collected minutes after
   the tab closes; a hard TTL bounds everything
 
-## See it
-
-![index](docs/shot-index.png)
-
-| Lesson: terminal + quiz | Scoreboard: standings & completion |
-|---|---|
-| ![lesson](docs/shot-lesson.png) | ![scoreboard](docs/shot-scoreboard.png) |
-
 ## Quickstart
 
 With a [kind](https://kind.sigs.k8s.io) cluster and this repo, the whole
