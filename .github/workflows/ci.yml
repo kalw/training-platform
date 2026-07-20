@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Never cut two releases at once (a second push while one is tagging would
+# race on the tag).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -89,6 +95,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
@@ -108,7 +116,8 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=sha
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -119,14 +128,10 @@ jobs:
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
 
-  # The Helm chart: validated on every push/PR, published to ghcr.io as an
-  # OCI artifact on tags (same registry and auth as the container image, so
-  # there's no GitHub Pages branch to maintain).
+  # The Helm chart is validated on every push/PR. Publishing happens in the
+  # release job, which owns the version being cut.
   chart:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
@@ -154,32 +159,97 @@ jobs:
       - name: Lint (strict)
         run: helm lint --strict deploy/helm/training-platform
 
-      # Chart version follows the release tag; appVersion pins the image tag
-      # published by the image job for the same commit.
-      - name: Package and push (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          helm package deploy/helm/training-platform \
-            --version "$VERSION" --app-version "$VERSION" --destination /tmp/chart
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
-            helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
-          helm push "/tmp/chart/training-platform-$VERSION.tgz" oci://ghcr.io/kalw/charts
-
-  # Attach cross-compiled binaries to GitHub Releases on tags.
+  # Cut a release. Two ways in:
+  #
+  #   * push to main  -> derive the next semver from the Conventional Commits
+  #                      since the last tag, create it, and publish
+  #   * push a v* tag -> publish exactly that tag (manual / seed releases)
+  #
+  # Docs/chore/ci-only pushes produce no release (default_bump: false).
+  #
+  # Everything is published from THIS job rather than from tag-triggered ones,
+  # because a tag pushed with GITHUB_TOKEN does not trigger workflows — a
+  # tag-gated publish would silently never run for auto-cut releases, and the
+  # chart's appVersion would point at an image tag that was never pushed.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-matrix, image]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [test, build-matrix, e2e, image, chart]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
+      - uses: azure/setup-helm@v4
+        with: {version: v3.16.3}
+
+      - name: Compute next version (Conventional Commits)
+        id: next
+        if: github.ref == 'refs/heads/main'
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release_branches: main
+          default_bump: false
+          dry_run: true   # compute only; we push a lightweight tag ourselves
+
+      - name: Resolve the version being released
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ steps.next.outputs.new_tag }}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "no release-worthy commits since the last tag"
+          else
+            echo "tag=$tag"          >> "$GITHUB_OUTPUT"
+            echo "version=${tag#v}"  >> "$GITHUB_OUTPUT"
+          fi
+
+      # A lightweight tag on HEAD: GoReleaser requires the current tag to point
+      # at the commit being built, which the action's annotated tag would not.
+      - name: Create and push the tag
+        if: github.ref == 'refs/heads/main' && steps.v.outputs.tag != ''
+        run: |
+          git tag "${{ steps.v.outputs.tag }}"
+          git push origin "${{ steps.v.outputs.tag }}"
+
+      # Retag the multi-arch image the image job already pushed, by digest —
+      # no rebuild, and it is provably the same artifact CI tested.
+      - name: Tag the image with the release version
+        if: steps.v.outputs.tag != ''
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker buildx imagetools create \
+            -t "ghcr.io/kalw/training-platform:${{ steps.v.outputs.version }}" \
+            -t "ghcr.io/kalw/training-platform:latest" \
+            "ghcr.io/kalw/training-platform@${{ needs.image.outputs.digest }}"
+
+      # Chart version == release version; its appVersion pins the image tag
+      # created just above.
+      - name: Package and push the Helm chart
+        if: steps.v.outputs.tag != ''
+        run: |
+          helm package deploy/helm/training-platform \
+            --version "${{ steps.v.outputs.version }}" \
+            --app-version "${{ steps.v.outputs.version }}" \
+            --destination /tmp/chart
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+          helm push "/tmp/chart/training-platform-${{ steps.v.outputs.version }}.tgz" \
+            oci://ghcr.io/kalw/charts
+
       - uses: actions/setup-go@v5
+        if: steps.v.outputs.tag != ''
         with: {go-version: "1.25", cache: true}
       - uses: goreleaser/goreleaser-action@v6
+        if: steps.v.outputs.tag != ''
         with:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.v.outputs.tag }}

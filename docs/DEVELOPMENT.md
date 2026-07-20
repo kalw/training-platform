@@ -31,9 +31,44 @@ make assets          # refresh vendored front-end assets from the npm pins
 
 CI ([`ci.yml`](../.github/workflows/ci.yml)) runs vet + race tests + a gofmt
 check, cross-compiles the full OS/arch matrix on every push and PR, runs the
-Playwright e2e suite in Docker, builds a multi-arch
-(`linux/amd64,linux/arm64`) image to GHCR on `main`/tags, and cuts a
-goreleaser release (binaries for all targets + checksums) on `v*` tags.
+Playwright e2e suite in Docker, validates the Helm chart, and builds a
+multi-arch (`linux/amd64,linux/arm64`) image to GHCR on `main`.
+
+## Releases
+
+Releases are automatic. Every push to `main` is analysed with
+[Conventional Commits](https://www.conventionalcommits.org/): the next
+[semver](https://semver.org/) is derived from the commit types since the last
+tag, the tag is created, and everything is published for it.
+
+| Commit prefix | Version bump |
+| --- | --- |
+| `fix:` | patch (`x.y.Z`) |
+| `feat:` | minor (`x.Y.0`) |
+| `feat!:` / `fix!:` / `BREAKING CHANGE:` footer | major (`X.0.0`) |
+| `docs:`, `chore:`, `ci:`, `refactor:`, `test:`, `style:` | **no release** |
+
+A release publishes, in one job, all for the same version:
+
+- the **GitHub Release** with cross-compiled binaries + checksums (GoReleaser)
+- the **container image** tag `X.Y.Z` (and `latest`)
+- the **Helm chart** to `oci://ghcr.io/kalw/charts`, its `appVersion` pinned
+  to that image tag
+
+You can also cut a specific version by pushing a `v*` tag yourself
+(`git tag v1.0.0 && git push origin v1.0.0`) — that publishes exactly that
+tag. Use it to seed the first release or to jump a version.
+
+Two implementation details worth knowing before editing that job:
+
+- **Everything publishes from the one `release` job**, not from separate
+  tag-triggered jobs. A tag pushed with `GITHUB_TOKEN` does *not* trigger
+  workflows, so a tag-gated publish would silently never run for an
+  auto-cut release — and the chart would advertise an image tag that was
+  never pushed.
+- **The image is retagged by digest**, not rebuilt: the release ships the
+  exact artifact the e2e suite tested, and costs seconds instead of a second
+  multi-arch build.
 
 ## Testing
 
