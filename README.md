@@ -5,6 +5,7 @@
 [![Go version](https://img.shields.io/github/go-mod/go-version/kalw/training-platform?logo=go)](go.mod)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kalw/training-platform)](https://goreportcard.com/report/github.com/kalw/training-platform)
 [![Image](https://img.shields.io/badge/ghcr.io-kalw%2Ftraining--platform-blue?logo=docker&logoColor=white)](https://github.com/kalw/training-platform/pkgs/container/training-platform)
+[![Helm chart](https://img.shields.io/badge/helm-oci%3A%2F%2Fghcr.io%2Fkalw%2Fcharts-0f1689?logo=helm&logoColor=white)](docs/DEPLOY.md)
 
 A self-hosted, Katacoda-style hands-on training platform as **one Go
 binary**, deployed **only on Kubernetes**: Markdown lessons with live
@@ -27,7 +28,20 @@ class scoreboard.
 - **Session hygiene** — idle sessions are garbage-collected minutes after
   the tab closes; a hard TTL bounds everything
 
-## Quickstart
+## Install
+
+The Helm chart is published to GHCR alongside the image:
+
+```sh
+helm install training oci://ghcr.io/kalw/charts/training-platform --version 0.1.0 \
+  --namespace training --create-namespace \
+  --set serve.salt="$CTFD_SALT" --set persistence.enabled=true
+```
+
+See [docs/DEPLOY.md](docs/DEPLOY.md) for ingress, RBAC and the values that
+matter.
+
+## Quickstart (hacking on it)
 
 With a [kind](https://kind.sigs.k8s.io) cluster and this repo, the whole
 loop is four make targets:
