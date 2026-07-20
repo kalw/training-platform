@@ -122,6 +122,19 @@ events) is not vendored; see README "Relationship to training-console-pwd".
   references skip the browser). This is the Go equivalent of the legacy
   chromium step in `exportChallenges.sh`.
 
+  **Its limit, and the answer to it.** A dHash proves layout, not content —
+  rewriting every string on the example result page moves ~1% of the bits even
+  at a 32×32 grid, under the noise floor needed for cross-renderer tolerance.
+  So exercises that must assert what the page *says* declare
+  `exercise_expect:` and are graded by **server-side fetch** instead
+  (`/api/v1/challenges/verify`): the platform reaches the learner's Pod
+  directly and asserts the body. That is both exact and unforgeable by the
+  browser — the inverse of the screenshot proof, which is fuzzy *and* client
+  supplied. The target (port/path) is fixed on the challenge at build time and
+  the pod is validated against the session engine, so the endpoint is not an
+  arbitrary-URL fetcher. phash remains the fallback for genuinely visual or
+  client-rendered results.
+
   The **client** that produces the capture is `exercise-verify.js` (served at
   `/js/`, embedded, not vendored): the learner's result page — served from
   their session Pod through the exposed-port router, a different origin than

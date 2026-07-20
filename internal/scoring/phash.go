@@ -24,6 +24,14 @@ const DefaultPhashThreshold = 12
 // 9x8, and set one bit per adjacent-column comparison (8 rows x 8 comparisons
 // = 64 bits). dHash is robust to the small rendering differences between
 // browsers/platforms that make exact screenshot matching impossible.
+//
+// What it can and cannot prove: at this resolution a dHash captures the page's
+// coarse luminance layout — "the service came up and rendered the expected
+// shape". It cannot see text. Measured on the example result page, rewriting
+// every string on the page moved ~1% of bits even at a 32x32 grid, which is
+// below the noise floor you must tolerate across renderers. So a perceptual
+// match is evidence of layout, NOT of content; exercises that must assert what
+// the page says declare a VerifySpec and are graded server-side instead.
 func DHash(img image.Image) uint64 {
 	const w, h = 9, 8
 	small := resizeGray(img, w, h)
@@ -40,18 +48,41 @@ func DHash(img image.Image) uint64 {
 	return hash
 }
 
-// resizeGray nearest-neighbour downsamples to wxh grayscale (no external
-// image library needed for a hash this small).
+// resizeGray box-averages the image down to wxh grayscale (no external image
+// library needed for a hash this small).
+//
+// Averaging, not point-sampling: taking a single pixel per cell made the hash
+// both jittery (a 1px shift flips bits) and blind to most of the page, since
+// the few sample points rarely land on content. Averaging every pixel in the
+// cell means everything drawn there contributes. (It still cannot resolve
+// text — see DHash's note — but it is the correct downsample.)
 func resizeGray(img image.Image, w, h int) [][]uint8 {
 	b := img.Bounds()
 	out := make([][]uint8, h)
 	for y := 0; y < h; y++ {
 		out[y] = make([]uint8, w)
 		for x := 0; x < w; x++ {
-			sx := b.Min.X + x*max1(b.Dx())/w
-			sy := b.Min.Y + y*max1(b.Dy())/h
-			g := color.GrayModel.Convert(img.At(sx, sy)).(color.Gray)
-			out[y][x] = g.Y
+			x0 := b.Min.X + x*max1(b.Dx())/w
+			x1 := b.Min.X + (x+1)*max1(b.Dx())/w
+			y0 := b.Min.Y + y*max1(b.Dy())/h
+			y1 := b.Min.Y + (y+1)*max1(b.Dy())/h
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			if y1 <= y0 {
+				y1 = y0 + 1
+			}
+			var sum, n uint64
+			for yy := y0; yy < y1; yy++ {
+				for xx := x0; xx < x1; xx++ {
+					g := color.GrayModel.Convert(img.At(xx, yy)).(color.Gray)
+					sum += uint64(g.Y)
+					n++
+				}
+			}
+			if n > 0 {
+				out[y][x] = uint8(sum / n)
+			}
 		}
 	}
 	return out

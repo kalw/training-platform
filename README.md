@@ -78,7 +78,41 @@ the `/scoreboard`. The [Playwright suite](e2e) proves this, and demonstrates
 that the scoring channel *verifies* outcomes but doesn't *prevent* forgery
 (a client can POST a correct hash / screenshot directly, bypassing the UI).
 
-### How an exercise solve is submitted (the proof client)
+### How an exercise is graded
+
+There are two mechanisms, and **which one applies depends on the lesson**:
+
+| | server-side content check | screenshot proof (phash) |
+|---|---|---|
+| **Turned on by** | `exercise_expect:` / `exercise_expect_regex:` | nothing (the default) |
+| **Proves** | exactly what the page **says** | the page's coarse **layout** |
+| **Produced by** | the platform, fetching the learner's Pod | the learner's browser |
+| **Forgeable by the client** | no | yes |
+
+**Prefer the content check.** A dHash cannot see text: measured on the example
+result page, rewriting *every string on it* moves ~1% of the hash bits even at
+a 32×32 grid — below the noise floor you must tolerate across renderers. So a
+perceptual match proves the service came up and rendered the expected shape,
+**not** that it says the right thing. Add an assertion when the content
+matters:
+
+```yaml
+exercise_expect: "The service is running correctly"   # substring
+# or
+exercise_expect_regex: "Success|healthy"
+```
+
+The platform then fetches the result page **from the learner's own session
+Pod** — in-cluster, the same direct Pod-IP routability the port router uses —
+and asserts the body. `POST /api/v1/challenges/verify {challenge_hash, pod}`;
+the **port and path come from the challenge** (built from the exercise's demo
+routing), never from the request, and the pod is checked against the session
+engine before dialing, so the endpoint can't be steered at anything but the
+caller's own session. Responses are capped and redirects are not followed.
+Keep phash for exercises whose proof is genuinely visual, or whose result page
+is client-rendered (the server fetch sees raw HTML, it runs no JS).
+
+### How an exercise solve is submitted (the screenshot proof client)
 
 The exercise's **"Test Exercise"** button opens the *learner's own* result
 page — served by their session Pod on the exercise image's port, reached

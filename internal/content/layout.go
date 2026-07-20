@@ -408,10 +408,38 @@ async function rewritePortLinks(){
   });
 }
 
+// --- Server-verified exercises: the button asks the platform to fetch the
+// result page from the learner's own Pod and assert its content. Exact where
+// the screenshot proof is only perceptual (a dHash can't see text), and it
+// can't be produced by the browser — the page really has to serve it. ---
+document.querySelectorAll('a.exercise-demo[data-verify]').forEach(a => {
+  a.addEventListener('click', async (e) => {
+    e.preventDefault(); // graded server-side; no need to open the page
+    const v = a.parentElement.querySelector('.verdict');
+    const node = nodeFromTermRef(a.dataset.term);
+    if(!node || !node.pod){
+      v.textContent = 'start a session first'; v.style.color='var(--muted)'; return;
+    }
+    v.textContent = 'checking your session…'; v.style.color='var(--muted)';
+    try {
+      const r = await fetch('/api/v1/challenges/verify', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({challenge_hash: a.dataset.hashCode, pod: node.pod})});
+      const j = await r.json();
+      const st = j && j.data && j.data.status;
+      if(st === 'correct'){ v.textContent = '✓ verified — recorded'; v.style.color='var(--ok)'; }
+      else if(st === 'unreachable'){ v.textContent = 'could not reach the page in your session yet'; v.style.color='var(--bad)'; }
+      else if(st === 'incorrect'){ v.textContent = 'the page is not what the exercise expects yet'; v.style.color='var(--bad)'; }
+      else { v.textContent = (j && j.error) || 'could not verify'; v.style.color='var(--bad)'; }
+    } catch(e){ v.textContent='could not verify'; v.style.color='var(--bad)'; }
+  });
+});
+
 // Before a session is up, port links point nowhere useful — swallow the
 // click and hint instead (the legacy SDK bound window.open the same way).
 document.querySelectorAll('a[data-port]').forEach(a => {
   a.addEventListener('click', (e) => {
+    if(a.dataset.verify) return; // handled above (no navigation at all)
     if(a.dataset.routed) return;
     e.preventDefault();
     setStatus('start a session first', false);

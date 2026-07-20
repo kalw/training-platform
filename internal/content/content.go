@@ -15,6 +15,7 @@ package content
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/kalw/training-platform/internal/scoring"
@@ -44,6 +45,15 @@ type FrontMatter struct {
 	// ExercisePhash is an optional explicit override of the computed flag
 	// ("phash$<hex>[:threshold]"), for when there's no renderable reference.
 	ExercisePhash string `yaml:"exercise_phash"`
+	// ExerciseExpect / ExerciseExpectRegex turn on server-side content
+	// verification: the platform fetches the learner's result page itself
+	// (through the same in-cluster routability the port router uses) and
+	// asserts the body contains this. It is exact where the screenshot phash
+	// is only perceptual — a dHash cannot see a text change — so when set it
+	// decides the grade. The page is fetched at the exercise's demo routing
+	// (port/path), which is fixed here at build time, never client-supplied.
+	ExerciseExpect      string `yaml:"exercise_expect"`
+	ExerciseExpectRegex string `yaml:"exercise_expect_regex"`
 }
 
 // ExerciseResolver computes an exercise's reference phash flag from its
@@ -125,7 +135,40 @@ func Render(slug string, src []byte, salt string, resolver ExerciseResolver) (*L
 	for i, ph := range placeholders {
 		rendered = strings.Replace(rendered, placeholderToken(i), ph, 1)
 	}
-	rendered = pairDemoLinks(rendered, l.exerciseHashes)
+	rendered, routings := pairDemoLinks(rendered, l.exerciseHashes)
+
+	// Server-side content verification: the page to fetch is the exercise's
+	// demo routing (adopted from the authored mark, or the defaults), and
+	// what it must contain comes from the front matter. Recorded on the
+	// challenge so the server never takes the target from the client.
+	if fm.ExerciseExpect != "" || fm.ExerciseExpectRegex != "" {
+		for i, h := range l.exerciseHashes {
+			r := defaultDemoRouting()
+			if i < len(routings) {
+				r = routings[i]
+			}
+			port, err := strconv.Atoi(r.port)
+			if err != nil {
+				return nil, fmt.Errorf("exercise demo port %q is not a number", r.port)
+			}
+			for j := range l.Challenges {
+				if l.Challenges[j].Hash != h {
+					continue
+				}
+				l.Challenges[j].Verify = &scoring.VerifySpec{
+					Port:        port,
+					Path:        r.path,
+					Expect:      fm.ExerciseExpect,
+					ExpectRegex: fm.ExerciseExpectRegex,
+				}
+			}
+			// Tell the page this exercise is graded server-side, so the button
+			// asks the platform to check the session instead of opening the
+			// page for a screenshot.
+			rendered = strings.Replace(rendered,
+				`data-hash-code="`+h+`"`, `data-hash-code="`+h+`" data-verify="1"`, 1)
+		}
+	}
 
 	l.HTML = layout(fm, rendered)
 	return l, nil
@@ -259,9 +302,16 @@ var (
 // protocol) — so the learner always gets a clear button AND it opens the
 // right result page (often a non-80 port the exercise image serves). The
 // marked link itself stays a plain inline port link (a live preview).
-func pairDemoLinks(html string, hashes []string) string {
+// It also returns the routing each exercise ended up with (defaults where the
+// author wrote no mark), so the build can record the same target on the
+// challenge for server-side verification.
+func pairDemoLinks(html string, hashes []string) (string, []demoRouting) {
+	routings := make([]demoRouting, len(hashes))
+	for i := range routings {
+		routings[i] = defaultDemoRouting()
+	}
 	if len(hashes) == 0 {
-		return html
+		return html, routings
 	}
 	out := html
 	i := 0
@@ -285,9 +335,10 @@ func pairDemoLinks(html string, hashes []string) string {
 		}
 		r.prefix, r.proto = attrs["data-host-prefix"], attrs["data-protocol"]
 		out = strings.Replace(out, autoDemoAnchor(hashes[i]), demoButton(hashes[i], r), 1)
+		routings[i] = r
 		i++
 	}
-	return out
+	return out, routings
 }
 
 // tagAttrs pulls the double-quoted attributes out of an opening tag.

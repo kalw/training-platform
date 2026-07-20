@@ -1,9 +1,11 @@
 package scoring
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"time"
 )
 
 // Handler exposes the scoring API. It mirrors the two endpoints the lessons
@@ -15,9 +17,32 @@ import (
 //
 // userIDFunc extracts the current user id from a request (e.g. from an OIDC
 // session cookie); pass a func returning a constant for anonymous/dev use.
-func Handler(store *Store, userIDFunc func(*http.Request) string) http.Handler {
+// PodFetcher GETs path on port of a learner's session Pod and returns the
+// response status and body. Implementations MUST confirm the pod is one the
+// platform manages before dialing — the pod name is the one client-supplied
+// input on the verify path.
+type PodFetcher interface {
+	FetchPod(ctx context.Context, pod string, port int, path string) (status int, body []byte, err error)
+}
+
+// Option configures Handler.
+type Option func(*handlerCfg)
+
+type handlerCfg struct{ fetcher PodFetcher }
+
+// WithPodFetcher enables POST /api/v1/challenges/verify: server-side content
+// grading of exercises that declare a VerifySpec.
+func WithPodFetcher(f PodFetcher) Option {
+	return func(c *handlerCfg) { c.fetcher = f }
+}
+
+func Handler(store *Store, userIDFunc func(*http.Request) string, opts ...Option) http.Handler {
 	if userIDFunc == nil {
 		userIDFunc = func(*http.Request) string { return "anonymous" }
+	}
+	var cfg handlerCfg
+	for _, o := range opts {
+		o(&cfg)
 	}
 	mux := http.NewServeMux()
 	// List all challenges (never exposes flags) — powers the scoreboard page.
@@ -79,6 +104,61 @@ func Handler(store *Store, userIDFunc func(*http.Request) string) http.Handler {
 			"data":    map[string]any{"status": status},
 		})
 	})
+
+	// Server-side content verification. The learner asks "check my session";
+	// the platform fetches their result page itself and asserts what it
+	// contains. Unlike the screenshot proof this can't be produced by the
+	// browser — the only way to pass is to actually serve the right page.
+	mux.HandleFunc("/api/v1/challenges/verify", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if cfg.fetcher == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"success": false, "error": "verification unavailable (no cluster)"})
+			return
+		}
+		var req verifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false})
+			return
+		}
+		c, ok := store.Get(req.ChallengeHash)
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false})
+			return
+		}
+		if !c.Verify.Assertive() {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false, "error": "challenge has no content assertion"})
+			return
+		}
+		// Port and path come from the challenge, never the request — the
+		// client only chooses which of its own pods to check.
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		status, body, err := cfg.fetcher.FetchPod(ctx, req.Pod, c.Verify.Port, c.Verify.Path)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true,
+				"data":    map[string]any{"status": "unreachable", "detail": err.Error()},
+			})
+			return
+		}
+		if status != http.StatusOK || !c.Verify.Matches(string(body)) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true,
+				"data":    map[string]any{"status": "incorrect", "http_status": status},
+			})
+			return
+		}
+		store.RecordSolve(c.Hash, userIDFunc(r))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true, "data": map[string]any{"status": "correct"},
+		})
+	})
+
 	return withCORS(mux)
 }
 
@@ -107,6 +187,13 @@ func withCORS(h http.Handler) http.Handler {
 }
 
 var hashPathRe = regexp.MustCompile(`^/api/v1/challenges/hash/([0-9a-fA-F]+)$`)
+
+type verifyRequest struct {
+	ChallengeHash string `json:"challenge_hash"`
+	// Pod is the learner's session instance to check. The fetcher validates
+	// it is a managed instance Pod before dialing.
+	Pod string `json:"pod"`
+}
 
 type attemptRequest struct {
 	ChallengeHash string `json:"challenge_hash"`
