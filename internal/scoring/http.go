@@ -59,9 +59,22 @@ func Handler(store *Store, userIDFunc func(*http.Request) string, opts ...Option
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": out})
 	})
-	// Scoreboard: every recorded solve.
+	// Scoreboard: every recorded solve (the per-learner view).
 	mux.HandleFunc("/api/v1/scoreboard", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": store.Results()})
+	})
+	// Standings: the global view — ranking by points, and how many learners
+	// have solved each challenge.
+	mux.HandleFunc("/api/v1/standings", func(w http.ResponseWriter, r *http.Request) {
+		ranking, challenges, total := store.Standings()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"ranking":      ranking,
+				"challenges":   challenges,
+				"total_points": total,
+			},
+		})
 	})
 	mux.HandleFunc("/api/v1/challenges/hash/", func(w http.ResponseWriter, r *http.Request) {
 		m := hashPathRe.FindStringSubmatch(r.URL.Path)

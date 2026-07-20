@@ -65,6 +65,21 @@ extraVolumeMounts: []
 # Path to a JSON challenges file (mounted via extraVolumes) to seed scoring.
 challengesFile: ""
 
+# Durable solves. Solves are the only state that cannot be recomputed
+# (challenges are re-seeded from the build at every boot), so persistence is a
+# small PVC holding an append-only JSON-lines log — no database to run.
+#
+# Disabled = solves live in memory and are LOST on restart, which is fine for
+# CI and content authoring but not for a real class.
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""          # "" = cluster default
+  existingClaim: ""         # bring your own PVC instead of creating one
+  mountPath: /data
+  fileName: solves.jsonl
+  keepOnUninstall: true     # helm.sh/resource-policy: keep — don't bin learner progress
+
 # The session Pods this platform creates need to run privileged (nested
 # dockerd for "play with docker"). Pod Security is scoped to the session
 # namespace only, never cluster-wide.

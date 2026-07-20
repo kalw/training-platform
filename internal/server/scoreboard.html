@@ -22,6 +22,11 @@
   .badge { display:inline-block; background:rgba(79,140,255,.15); color:var(--accent); border-radius:20px; padding:1px 8px; font-size:12px; }
   .empty { color:var(--muted); padding:16px; }
   .user { color:var(--ok); font-weight:600; }
+  .rank { color:var(--muted); width:3em; }
+  .bar { background:var(--border); border-radius:20px; height:6px; overflow:hidden; min-width:80px; }
+  .bar span { display:block; height:100%; background:var(--accent); }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .sub { color:var(--muted); font-size:12px; font-weight:400; text-transform:none; letter-spacing:0; }
 </style>
 </head>
 <body>
@@ -30,6 +35,16 @@
   <a href="/">← back to lessons</a>
 </header>
 <main>
+  <section class="card">
+    <h2>Standings <span class="sub" id="totals"></span></h2>
+    <table><thead><tr><th class="rank">#</th><th>Learner</th><th class="num">Solved</th><th class="num">Points</th><th>Progress</th></tr></thead>
+    <tbody id="standings"><tr><td class="empty" colspan="5">loading…</td></tr></tbody></table>
+  </section>
+  <section class="card">
+    <h2>Challenge completion</h2>
+    <table><thead><tr><th>Challenge</th><th class="num">Points</th><th class="num">Solved by</th></tr></thead>
+    <tbody id="completion"><tr><td class="empty" colspan="3">loading…</td></tr></tbody></table>
+  </section>
   <section class="card">
     <h2>Challenges</h2>
     <table><thead><tr><th>Name</th><th>Points</th><th>Hash</th></tr></thead>
@@ -45,6 +60,24 @@
 async function load(){
   const ce=document.getElementById('challenges'), re=document.getElementById('results');
   try {
+    // Global view first: ranking across everyone, and how each challenge is
+    // going. The per-solve list below stays the detailed/user-centric view.
+    const sj=await (await fetch('/api/v1/standings')).json();
+    const d=(sj.data||{}), rank=(d.ranking||[]), comp=(d.challenges||[]), total=d.total_points||0;
+    const se=document.getElementById('standings'), coe=document.getElementById('completion');
+    document.getElementById('totals').textContent =
+      rank.length ? `${rank.length} learner(s) · ${total} points available` : '';
+    se.innerHTML = rank.length ? rank.map((s,i)=>{
+      const pct = total ? Math.round(100*s.points/total) : 0;
+      return `<tr><td class="rank">${i+1}</td><td class="user">${esc(s.user)}</td>`+
+             `<td class="num">${s.solved}</td><td class="num">${s.points}</td>`+
+             `<td><div class="bar" title="${pct}% of ${total}"><span style="width:${pct}%"></span></div></td></tr>`;
+    }).join('') : '<tr><td class="empty" colspan="5">no solves yet</td></tr>';
+    coe.innerHTML = comp.length ? comp.map(c=>
+      `<tr><td><span class="badge">${esc(c.name)}</span></td><td class="num">${c.value}</td>`+
+      `<td class="num">${c.solved}</td></tr>`
+    ).join('') : '<tr><td class="empty" colspan="3">no challenges seeded</td></tr>';
+
     const cj=await (await fetch('/api/v1/challenges')).json();
     const cs=(cj.data||[]);
     ce.innerHTML = cs.length ? cs.map(c=>

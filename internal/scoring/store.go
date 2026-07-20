@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -65,6 +66,7 @@ type Store struct {
 	byHash     map[string]*Challenge
 	solves     map[string]map[string]bool // challengeHash -> set of userIDs
 	phashGrade func(challengeFlag, submitted string) bool
+	journal    *Journal // nil = in-memory only
 }
 
 // NewStore returns an empty Store. phashGrader, if non-nil, grades
@@ -137,13 +139,8 @@ func (s *Store) Grade(challengeHash, submitted, userID string) (correct, known b
 		}
 	}
 
-	if correct {
-		s.mu.Lock()
-		if s.solves[challengeHash] == nil {
-			s.solves[challengeHash] = map[string]bool{}
-		}
-		s.solves[challengeHash][userID] = true
-		s.mu.Unlock()
+	if correct && s.recordSolve(challengeHash, userID) {
+		s.journalSolve(challengeHash, userID)
 	}
 	return correct, true
 }
@@ -152,12 +149,52 @@ func (s *Store) Grade(challengeHash, submitted, userID string) (correct, known b
 // server-side verify path, which establishes correctness by fetching the
 // learner's page rather than by matching a flag.
 func (s *Store) RecordSolve(challengeHash, userID string) {
+	if s.recordSolve(challengeHash, userID) {
+		s.journalSolve(challengeHash, userID)
+	}
+}
+
+// recordSolve updates the in-memory set, reporting whether this was new (so
+// the journal only grows on genuinely new solves, not on every re-submit).
+func (s *Store) recordSolve(challengeHash, userID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.solves[challengeHash] == nil {
 		s.solves[challengeHash] = map[string]bool{}
 	}
+	if s.solves[challengeHash][userID] {
+		return false
+	}
 	s.solves[challengeHash][userID] = true
+	return true
+}
+
+// journalSolve persists a new solve. A journal failure must not lose the
+// learner's progress in this process, so it is logged and the in-memory
+// solve stands.
+func (s *Store) journalSolve(challengeHash, userID string) {
+	if s.journal == nil {
+		return
+	}
+	if err := s.journal.Append(userID, challengeHash); err != nil {
+		log.Printf("scoring: could not persist solve (%s by %s): %v", challengeHash, userID, err)
+	}
+}
+
+// UseJournal attaches a solve log and replays what it already holds, so
+// solves survive restarts. Call once, before serving. Returns how many
+// solves were recovered.
+func (s *Store) UseJournal(j *Journal) (recovered int, err error) {
+	s.mu.Lock()
+	s.journal = j
+	s.mu.Unlock()
+	n, skipped, err := j.Replay(func(user, challenge string) {
+		s.recordSolve(challenge, user) // replay must not re-append
+	})
+	if skipped > 0 {
+		log.Printf("scoring: skipped %d unreadable solve-log line(s)", skipped)
+	}
+	return n, err
 }
 
 // Solved reports whether userID has solved challengeHash.
@@ -209,6 +246,67 @@ func (s *Store) Results() []Solve {
 		return out[i].ChallengeName < out[j].ChallengeName
 	})
 	return out
+}
+
+// Standing is one learner's overall position: how many challenges they have
+// solved and their total points.
+type Standing struct {
+	User   string `json:"user"`
+	Solved int    `json:"solved"`
+	Points int    `json:"points"`
+}
+
+// ChallengeStat is how a single challenge is going across all learners.
+type ChallengeStat struct {
+	Hash   string `json:"hash"`
+	Name   string `json:"name"`
+	Value  int    `json:"value"`
+	Solved int    `json:"solved"` // number of distinct users who solved it
+}
+
+// Standings aggregates every recorded solve into a global view: the ranking
+// (points desc, then fewer-solves-first is meaningless, so name asc breaks
+// ties) plus per-challenge completion counts and the totals available.
+func (s *Store) Standings() (ranking []Standing, challenges []ChallengeStat, totalPoints int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	byUser := map[string]*Standing{}
+	for hash, users := range s.solves {
+		value := 0
+		if c, ok := s.byHash[hash]; ok {
+			value = c.Value
+		}
+		for u := range users {
+			st := byUser[u]
+			if st == nil {
+				st = &Standing{User: u}
+				byUser[u] = st
+			}
+			st.Solved++
+			st.Points += value
+		}
+	}
+	ranking = make([]Standing, 0, len(byUser))
+	for _, st := range byUser {
+		ranking = append(ranking, *st)
+	}
+	sort.Slice(ranking, func(i, j int) bool {
+		if ranking[i].Points != ranking[j].Points {
+			return ranking[i].Points > ranking[j].Points
+		}
+		return ranking[i].User < ranking[j].User
+	})
+
+	challenges = make([]ChallengeStat, 0, len(s.byHash))
+	for hash, c := range s.byHash {
+		challenges = append(challenges, ChallengeStat{
+			Hash: hash, Name: c.Name, Value: c.Value, Solved: len(s.solves[hash]),
+		})
+		totalPoints += c.Value
+	}
+	sort.Slice(challenges, func(i, j int) bool { return challenges[i].Name < challenges[j].Name })
+	return ranking, challenges, totalPoints
 }
 
 func isPhashFlag(flag string) bool {

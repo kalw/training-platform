@@ -102,6 +102,7 @@ func cmdServe(args []string) {
 	shimNS := fs.String("shim-namespace", envOr("SHIM_NS", "training-sessions"), "namespace the Docker shim materializes containers into")
 	salt := fs.String("salt", os.Getenv("CTFD_SALT"), "scoring salt (must match the lessons build)")
 	challengesFile := fs.String("challenges-file", envOr("CHALLENGES_FILE", ""), "JSON challenges file to seed scoring at boot")
+	solvesFile := fs.String("solves-file", envOr("SOLVES_FILE", ""), "append-only JSON-lines log making solves survive restarts (empty = in-memory only)")
 	routerHost := fs.String("router-host", envOr("ROUTER_HOST", ""), "public suffix for exposed-port links (e.g. direct.training.example.com)")
 	baseURL := fs.String("base-url", envOr("BASE_URL", ""), "external origin, for social-login redirect URLs")
 	_ = fs.Parse(args)
@@ -117,6 +118,7 @@ func cmdServe(args []string) {
 		ShimNamespace:          *shimNS,
 		Salt:                   *salt,
 		ChallengesFile:         *challengesFile,
+		SolvesFile:             *solvesFile,
 		RouterHost:             *routerHost,
 		// Social login: providers enable themselves when their client
 		// id/secret env vars are present. See internal/auth.
