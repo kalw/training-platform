@@ -109,11 +109,22 @@ the cluster-gated Playwright terminal test at either with
 
 ## Regenerating the README demo
 
-The landing-page cast/screenshots live in `docs/` and are produced from a
-real run (asciinema + headless Chrome):
+`docs/demo.svg` is one self-contained animated SVG with three timed slides:
+the terminal cast (a real `build` + `serve` run), then the lesson page, then
+the scoreboard. The master loop is exactly 3× the cast duration so the
+cast's own animation stays phase-aligned across loops. Inputs live in
+`docs/` (`demo.cast`, `shot-lesson.png`, `shot-scoreboard.png`); the
+screenshots are headless-Chrome captures of the served example site (poll
+for the output file, then kill Chrome — it doesn't exit on its own).
 
 ```sh
+# 1. record the cast (asciinema 3 writes v3; svg-term needs v2)
 asciinema rec docs/demo.cast --window-size 90x12 --command "<build+serve demo>"
 asciinema convert --output-format asciicast-v2 docs/demo.cast /tmp/demo-v2.cast
-npx svg-term-cli --in /tmp/demo-v2.cast --out docs/demo.svg --window --padding 14
+npx svg-term-cli --in /tmp/demo-v2.cast --out /tmp/demo-term.svg --window --padding 14
+
+# 2. shrink the screenshots and compose the slides
+sips -Z 1936 -s format jpeg -s formatOptions 70 docs/shot-lesson.png     --out /tmp/lesson.jpg
+sips -Z 1936 -s format jpeg -s formatOptions 70 docs/shot-scoreboard.png --out /tmp/scoreboard.jpg
+scripts/compose-demo.py /tmp/demo-term.svg /tmp/lesson.jpg /tmp/scoreboard.jpg docs/demo.svg
 ```
