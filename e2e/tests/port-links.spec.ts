@@ -80,10 +80,23 @@ test.describe('port link rewriting (once a session is up)', () => {
     expect(new URL(second!).searchParams.get('hash_code')).toBeTruthy();
   });
 
-  test('before a session, clicking a port link is swallowed with a hint', async ({ page }) => {
+  test('before a session, clicking a plain port link is swallowed with a hint', async ({ page }) => {
     await page.goto('/03-fix-nginx-exercise.html');
-    await page.locator('a.exercise-demo').click();
+    // The inline authored link is a plain port link (no hash_code): it can't
+    // go anywhere until a session is up, so the click is swallowed.
+    await page.locator('#exerciseDemo').click();
     await expect(page).toHaveURL(/03-fix-nginx-exercise\.html$/); // no navigation
     await expect(page.locator('#tstatus')).toHaveText(/start a session first/i);
+  });
+
+  // This lesson declares exercise_expect:, so its button is graded
+  // server-side — it never navigates, and reports next to the exercise.
+  test('before a session, the server-verified button reports in the exercise verdict', async ({ page }) => {
+    await page.goto('/03-fix-nginx-exercise.html');
+    const btn = page.locator('a.exercise-demo[data-verify]');
+    await expect(btn).toHaveCount(1);
+    await btn.click();
+    await expect(page).toHaveURL(/03-fix-nginx-exercise\.html$/); // no navigation
+    await expect(page.locator('.exercise .verdict')).toHaveText(/start a session first/i);
   });
 });

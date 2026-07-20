@@ -88,12 +88,6 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 			log.Printf("scoring: loaded %d challenge(s)", n)
 		}
 	}
-	// Mount scoring across the whole /api/v1/ subtree (it owns
-	// /challenges, /challenges/hash/, /challenges/attempt, /scoreboard). The
-	// sessions routes below are registered as more-specific patterns, which
-	// win under Go 1.22+ ServeMux precedence.
-	mux.Handle("/api/v1/", scoring.Handler(store, userID))
-
 	termNS := cfg.TerminalNamespace
 	if termNS == "" {
 		termNS = "training-sessions"
@@ -115,6 +109,18 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		log.Printf("sessions/terminals disabled: no Kubernetes cluster available: %v", err)
 		eng = nil
 	}
+
+	// Mount scoring across the whole /api/v1/ subtree (it owns /challenges,
+	// /challenges/hash/, /challenges/attempt, /challenges/verify,
+	// /scoreboard). The sessions routes below are registered as more-specific
+	// patterns, which win under Go 1.22+ ServeMux precedence. With a cluster
+	// we also wire the pod fetcher, which enables server-side content
+	// verification of exercises that declare one.
+	var scoringOpts []scoring.Option
+	if eng != nil {
+		scoringOpts = append(scoringOpts, scoring.WithPodFetcher(newPodFetcher(eng, termNS)))
+	}
+	mux.Handle("/api/v1/", scoring.Handler(store, userID, scoringOpts...))
 
 	var bridge *terminal.Bridge
 	if eng != nil {

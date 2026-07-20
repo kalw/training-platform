@@ -8,6 +8,11 @@ image: nginx
 # image so the build is deterministic and browser-free.
 exercise_result: 03-fix-nginx-result.png
 exercise_threshold: 20
+# Server-side content check — authoritative. The platform fetches the result
+# page from your own session Pod and asserts this text. A perceptual hash
+# can't see text (rewriting every string on this page moves ~1% of the hash
+# bits), so an assertion is what actually pins the content.
+exercise_expect: "The service is running correctly"
 terms: 2
 ---
 
@@ -37,16 +42,25 @@ the default (port 80, `/result.html`). The marked `webserver` link itself
 stays inline as a plain live preview. Without any mark, the button uses the
 defaults.
 
-Clicking **Test Exercise** opens the exercise's result page (served by your
-session on port 8888) carrying a `hash_code`. The page's loader pulls
-`js/exercise-verify.js` from the lessons site, which screenshots the page at
-1024×768 with html2canvas and submits the capture to
-`/api/v1/challenges/attempt` — a small chip in the corner reports
-"✓ proof accepted — recorded". The server computes a **perceptual hash
-(dHash)** of your capture and accepts it when it's within a small **Hamming
-distance** of the reference — so identical-looking pages pass even though no
-two browser screenshots are ever byte-identical. The solve then shows on the
-[`/scoreboard`](/scoreboard).
+This lesson sets `exercise_expect:`, so **Test Exercise** is graded
+**server-side**: the platform fetches `/03-fix-nginx-result.html` on port
+8888 *from your own session Pod* (Pod IPs are directly routable in-cluster,
+the same property the port router uses) and asserts the body contains the
+expected text. The verdict appears under the button, and the solve shows on
+the [`/scoreboard`](/scoreboard).
+
+That check is **exact**, and the browser can't fake it — the page really has
+to serve the right thing. Note the target (port 8888 + the result path) is
+fixed at build time from this lesson, never taken from the browser, so the
+endpoint can't be pointed at anything but your own session.
+
+Without `exercise_expect:`, exercises fall back to **screenshot proof**: the
+result page loads `js/exercise-verify.js`, which screenshots it at 1024×768
+with html2canvas and posts the capture to `/api/v1/challenges/attempt`, where
+a **perceptual hash (dHash)** is compared within a **Hamming distance** of the
+build-time reference. That tolerates cross-browser rendering differences —
+but it only proves the page's coarse *layout*, not its text, which is exactly
+why a content assertion exists.
 
 The reference flag for this exercise (`phash$…:12`) is produced at **build
 time** by `training build`: it renders the expected result page

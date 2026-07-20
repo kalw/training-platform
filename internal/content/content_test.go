@@ -121,6 +121,48 @@ func TestPlainLessonHasNoChallenges(t *testing.T) {
 	}
 }
 
+// exercise_expect turns on server-side content grading: the challenge must
+// carry the fetch target (taken from the demo routing, never the client) and
+// the assertion, and the button must be marked so the page asks the server.
+func TestExerciseExpectBuildsVerifySpec(t *testing.T) {
+	res := funcResolver(func(string, int) (string, error) { return "phash$0000000000000001:5", nil })
+	src := []byte("---\ntitle: E\nexercise_expect: \"running correctly\"\n---\n" +
+		"{% exercise %}\nFix it so " +
+		"[webserver](/result-page.html){:id=\"exerciseDemo\"}{:data-port=\"8888\"} is green.\n" +
+		"{% endexercise %}\n")
+	l, err := Render("ex", src, "s", res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := l.Challenges[0].Verify
+	if v == nil {
+		t.Fatal("exercise_expect did not produce a Verify spec")
+	}
+	if v.Port != 8888 || v.Path != "/result-page.html" {
+		t.Errorf("verify target = %d%s, want the demo routing 8888/result-page.html", v.Port, v.Path)
+	}
+	if v.Expect != "running correctly" || !v.Assertive() {
+		t.Errorf("verify assertion = %+v", v)
+	}
+	if !strings.Contains(l.HTML, `data-verify="1"`) {
+		t.Error("demo button not marked for server-side verification")
+	}
+
+	// Without the front matter there is no spec and no marking (phash path).
+	l2, err := Render("ex2", []byte("{% exercise %}\nFix it.\n{% endexercise %}\n"), "s", res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l2.Challenges[0].Verify != nil {
+		t.Error("challenge got a Verify spec without exercise_expect")
+	}
+	// (the page script legitimately mentions [data-verify] in a selector, so
+	// assert on the rendered attribute value)
+	if strings.Contains(l2.HTML, `data-verify="1"`) {
+		t.Error("button marked for verification without an assertion")
+	}
+}
+
 func TestAuthoredExerciseDemoLinkPairing(t *testing.T) {
 	res := funcResolver(func(string, int) (string, error) { return "phash$0000000000000001:5", nil })
 

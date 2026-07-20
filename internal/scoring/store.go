@@ -2,7 +2,9 @@ package scoring
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -16,6 +18,42 @@ type Challenge struct {
 	Name  string   `json:"name"`
 	Value int      `json:"value"`
 	Flags []string `json:"flags"`
+	// Verify, when set, grades this exercise by fetching the learner's result
+	// page server-side and asserting its content — exact, and unlike the
+	// screenshot proof it can't be produced by the browser. It takes
+	// precedence over the phash flag (see the /challenges/verify endpoint).
+	Verify *VerifySpec `json:"verify,omitempty"`
+}
+
+// VerifySpec says where the learner's result page lives inside their session
+// and what it must contain. Port/Path are fixed at build time from the
+// lesson — never taken from the client — so the endpoint can't be turned into
+// an arbitrary-URL fetcher.
+type VerifySpec struct {
+	Port int    `json:"port"`
+	Path string `json:"path"`
+	// Expect is a plain substring the page body must contain.
+	Expect string `json:"expect,omitempty"`
+	// ExpectRegex is an alternative to Expect (RE2, matched against the body).
+	ExpectRegex string `json:"expect_regex,omitempty"`
+}
+
+// Matches reports whether a fetched page body satisfies the spec.
+func (v *VerifySpec) Matches(body string) bool {
+	switch {
+	case v.Expect != "":
+		return strings.Contains(body, v.Expect)
+	case v.ExpectRegex != "":
+		re, err := regexp.Compile(v.ExpectRegex)
+		return err == nil && re.MatchString(body)
+	}
+	return false
+}
+
+// Assertive reports whether the spec actually asserts something (a spec with
+// neither Expect nor ExpectRegex would accept any page, so it's ignored).
+func (v *VerifySpec) Assertive() bool {
+	return v != nil && (v.Expect != "" || v.ExpectRegex != "")
 }
 
 // Store is an in-memory challenge registry. It replaces the patched-CTFd
@@ -108,6 +146,18 @@ func (s *Store) Grade(challengeHash, submitted, userID string) (correct, known b
 		s.mu.Unlock()
 	}
 	return correct, true
+}
+
+// RecordSolve marks challengeHash solved by userID (idempotent). Used by the
+// server-side verify path, which establishes correctness by fetching the
+// learner's page rather than by matching a flag.
+func (s *Store) RecordSolve(challengeHash, userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.solves[challengeHash] == nil {
+		s.solves[challengeHash] = map[string]bool{}
+	}
+	s.solves[challengeHash][userID] = true
 }
 
 // Solved reports whether userID has solved challengeHash.
