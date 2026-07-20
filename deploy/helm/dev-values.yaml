@@ -7,6 +7,12 @@ image:
   tag: dev
   pullPolicy: IfNotPresent
 
+# Exercise the durable solve log locally — kind's default storage class
+# provisions this, and solves then survive `make dev-deploy` rollouts.
+persistence:
+  enabled: true
+  size: 128Mi
+
 serve:
   lessonsDir: /lessons
   salt: demo-salt

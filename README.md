@@ -310,6 +310,39 @@ the cluster-gated Playwright terminal test at either with
 `E2E_CLUSTER=1 E2E_PORT=8080 npx playwright test tests/terminal.spec.ts`
 (from `e2e/`, against a running `port-forward`).
 
+## Scoring persistence (solves)
+
+Challenges are re-seeded from the build's `challenges.json` at every boot, so
+the only state worth keeping is **solves**. A solve is a tiny, append-only,
+idempotent fact, so persistence is an **append-only JSON-lines file** rather
+than a database:
+
+```sh
+training serve --solves-file /data/solves.jsonl     # or SOLVES_FILE=…
+```
+
+Each record is fsync'd before the request returns, and the log is replayed at
+boot (`scoring: solves persisted to … (recovered N)`). A crash-torn final line
+is skipped rather than failing the boot, and the tail is healed on open so the
+next append can't merge into it. The file stays readable with `cat`.
+
+**Without it, solves live in memory and are lost on restart** — fine for CI
+and content authoring, lossy for a real class. The boot log always states
+which mode is active.
+
+On Kubernetes, turn it on in the chart (it provisions a small PVC, annotated
+`helm.sh/resource-policy: keep` so `helm uninstall` doesn't bin learner
+progress):
+
+```sh
+helm upgrade --install training deploy/helm/training-platform \
+  --set persistence.enabled=true --set persistence.size=1Gi
+```
+
+`/scoreboard` shows the **global standings** (ranking by points, per-challenge
+completion) on top of the per-solve list; the same data is at
+`GET /api/v1/standings`.
+
 ## Deploy (Kubernetes only)
 
 A Helm chart is in [`deploy/helm/training-platform`](deploy/helm/training-platform):

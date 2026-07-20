@@ -7,6 +7,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -55,6 +56,10 @@ type Config struct {
 	// ChallengesFile, if set, seeds the scoring store at boot (JSON produced
 	// by the lessons build). Missing file is logged and ignored.
 	ChallengesFile string
+	// SolvesFile, if set, is an append-only JSON-lines log that makes solves
+	// survive restarts (replayed at boot). Empty keeps scoring in memory —
+	// fine for CI and content authoring, lossy for a real class.
+	SolvesFile string
 	// Auth configures social login (GitHub/Google). Zero value = anonymous.
 	Auth auth.Options
 }
@@ -87,6 +92,21 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 		} else {
 			log.Printf("scoring: loaded %d challenge(s)", n)
 		}
+	}
+	// Durable solves. Challenges are re-seeded from the build every boot, so
+	// only the solves — which can't be recomputed — are journalled.
+	if cfg.SolvesFile != "" {
+		j, err := scoring.OpenJournal(cfg.SolvesFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("solve log: %w", err)
+		}
+		n, err := store.UseJournal(j)
+		if err != nil {
+			log.Printf("scoring: solve log replay stopped early: %v", err)
+		}
+		log.Printf("scoring: solves persisted to %s (recovered %d)", cfg.SolvesFile, n)
+	} else {
+		log.Printf("scoring: solves are IN-MEMORY only (set --solves-file to persist across restarts)")
 	}
 	termNS := cfg.TerminalNamespace
 	if termNS == "" {

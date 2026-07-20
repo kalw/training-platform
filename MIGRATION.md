@@ -16,7 +16,7 @@ experiments this is built on).
 |---|---|---|
 | `training-console-pwd` | `internal/session`, `internal/terminal`, `internal/dockershim`, `internal/router` | ✅ **retirable** |
 | `training-console-pwd-sdk` | the rendered lesson page's own JS (`internal/content/layout.go`) | ✅ **retirable** |
-| `training-ctfd` | `internal/scoring` | ⚠️ **not yet** — no persistence, no users/teams/admin |
+| `training-ctfd` | `internal/scoring` | ✅ **retirable** — solves are durable; users/teams/admin declared out of scope |
 | `training-lessons-ps` | `internal/content` | ⚠️ **not yet** — renderer is a subset; site structure not ported |
 | `training-exercise-template` | *nothing — still required* | ⛔ **keep** |
 | `training-deployment` | `deploy/helm/training-platform` + `make dev-*` | 🔸 **scope decision** |
@@ -34,20 +34,27 @@ its code is not vendored (it is frozen on xterm 2.9.2 / webpack 2 / Node 8).
 Deliberately **not** ported: `openConsoleTool(...)` popups (file editor,
 session panel), the ssh gateway, Windows instances. Retiring loses those.
 
-### ⚠️ `training-ctfd` — blocked on two things
+### ✅ `training-ctfd` — replaced
 
-1. **Solve persistence.** `internal/scoring.Store` is **in-memory**: a
-   restart or redeploy wipes every recorded solve. CTFd keeps them in MariaDB.
-   This is a blocker for any real class. Needs a durable store behind `Store`
-   (the interface is small: `Upsert`, `Get`, `RecordSolve`, `Solved`,
-   `Results`).
-2. **Identity and administration.** CTFd ships users, **teams**, an admin UI
-   and challenge management. This platform has social login (GitHub/Google)
-   or anonymous, no teams, and no admin surface — challenges are seeded from
-   `challenges.json` at boot and are otherwise immutable.
+What is replaced: the challenge-hash lookup, the attempt endpoint, phash
+exercise grading, server-side content verification, the scoreboard, and —
+since the durable solve log landed — **persistence**.
 
-What *is* replaced: the challenge-hash lookup, the attempt endpoint, phash
-exercise grading, and the scoreboard.
+**Solves survive restarts** without running a database. They are the only
+state that cannot be recomputed (challenges are re-seeded from the build's
+`challenges.json` at every boot), and a solve is a tiny, append-only,
+idempotent fact — so the store is an **append-only JSON-lines file**
+(`--solves-file`, `persistence.*` in the chart), fsync'd per record and
+replayed at boot. A crash-torn final line is skipped rather than failing the
+boot, and the tail is healed on open so the next append can't merge into it.
+`cat` is a valid debugging tool.
+
+**Deliberately not replaced — declared out of scope:** users, teams, an admin
+UI and challenge management. Identity is social login (GitHub/Google) or
+anonymous; challenges are immutable, seeded from the build. The global
+**standings** view (`/api/v1/standings`, rendered on `/scoreboard`) covers
+the reporting need that the CTFd scoreboard served. Revisit only if
+challenge management is actually wanted.
 
 ### ⚠️ `training-lessons-ps` — blocked on renderer fidelity
 
@@ -94,8 +101,12 @@ six-repo topology and should be treated as history.
 
 ## Before retiring anything
 
-1. Make the scoring store durable (blocks `training-ctfd`).
-2. Decide the identity/teams story (blocks `training-ctfd`).
+1. ~~Make the scoring store durable~~ — **done**: append-only solve log,
+   enabled with `persistence.enabled=true` (the chart provisions a small PVC).
+   Note it is **off by default**, so a deployment that wants durable solves
+   must turn it on.
+2. ~~Decide the identity/teams story~~ — **out of scope** by decision; the
+   global standings view covers reporting.
 3. Add ordered lists + images to the renderer (blocks authoring at volume).
 4. Confirm the k8s-only decision (decides `training-deployment`).
 5. Archive rather than delete — the 88 posts and the Ansible role are the
@@ -121,6 +132,11 @@ six-repo topology and should be treated as history.
   helm upgrade), `dev-lessons` (re-render content only), `dev-forward`,
   `dev-down`. Requires the kind cluster's control-plane container to be
   running — after a Docker restart, `docker start <cluster>-control-plane`.
+- **Solves are in-memory unless `persistence.enabled=true`** (or
+  `--solves-file` / `SOLVES_FILE` outside the chart). The boot log says which
+  mode is active — "solves are IN-MEMORY only" vs "solves persisted to
+  <path> (recovered N)". The PVC carries `helm.sh/resource-policy: keep` so
+  `helm uninstall` does not bin learner progress.
 - **Vendored front-end assets** (xterm, html2canvas) are pinned as npm
   dependencies in `internal/content/assets/package.json` and refreshed with
   `make assets`; CI enforces the committed copies match the lockfile, and
