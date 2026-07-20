@@ -24,7 +24,7 @@ session. Two things make that work on a k8s deployment:
    at it) drive Kubernetes as if it were a Docker daemon. This was validated
    end-to-end — create/start/exec/attach/logs/rm via the real `docker` CLI,
    and a full session+terminal round-trip through an unmodified PWD console —
-   in `../training-deployment/K8S-SANDBOX-DESIGN.md`.
+   in `K8S-SANDBOX-DESIGN.md`.
 
 So the binary offers **both** a native k8s session engine (for a k8s-aware
 console) and the Docker-API shim (for Docker-native tooling), backed by the
