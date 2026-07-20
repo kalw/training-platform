@@ -50,8 +50,11 @@ boot, and the tail is healed on open so the next append can't merge into it.
 `cat` is a valid debugging tool.
 
 **Deliberately not replaced — declared out of scope:** users, teams, an admin
-UI and challenge management. Identity is social login (GitHub/Google) or
-anonymous; challenges are immutable, seeded from the build. The global
+UI and challenge management. Identity is social login (GitHub/Google) or, with
+none configured, a per-browser random learner name (`clever-marten-077`) in a
+long-lived cookie — enough to keep a classroom's rows distinct on the
+scoreboard without running accounts. It identifies, it does not authenticate.
+Challenges are immutable, seeded from the build. The global
 **standings** view (`/api/v1/standings`, rendered on `/scoreboard`) covers
 the reporting need that the CTFd scoreboard served. Revisit only if
 challenge management is actually wanted.

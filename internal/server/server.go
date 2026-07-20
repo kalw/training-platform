@@ -69,17 +69,18 @@ type Config struct {
 func New(cfg Config) (http.Handler, *session.Engine, error) {
 	mux := http.NewServeMux()
 
-	// Social login (GitHub/Google). When unconfigured, mgr is nil and every
-	// user is "anonymous" — the platform still runs.
-	var userID func(*http.Request) string
+	// Identity. Social login (GitHub/Google) when configured; otherwise every
+	// browser still gets its own stable, random learner name (see
+	// auth.AnonymousMiddleware) so a classroom doesn't collapse into a single
+	// "anonymous" row on the scoreboard.
 	mgr, err := auth.New(cfg.Auth)
 	if err != nil {
 		return nil, nil, err
 	}
 	if mgr != nil {
 		mux.Handle("/auth/", mgr.Handler())
-		userID = mgr.UserID
 	}
+	userID := auth.UserIDFunc(mgr)
 
 	// Scoring API. Exercise challenges are graded by perceptual hash
 	// (dHash + Hamming) of the submitted screenshot proof. Seed the store
@@ -247,7 +248,13 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 	// the repo conventions), and lesson pages are pre-rendered static HTML —
 	// so deployment-specific values reach them here, not at build time.
 	mux.HandleFunc("/api/v1/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"router_host": cfg.RouterHost})
+		// "user" lets a page show learners which name their solves are
+		// recorded under — otherwise a random name on the scoreboard is
+		// meaningless to the person who earned it.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"router_host": cfg.RouterHost,
+			"user":        userID(r),
+		})
 	})
 
 	// Vendored front-end assets (xterm.js & co) baked into the binary; lesson
@@ -298,6 +305,10 @@ func New(cfg Config) (http.Handler, *session.Engine, error) {
 			mux.ServeHTTP(w, r)
 		})
 	}
+
+	// Assign anonymous learner names outermost, so every surface (lessons,
+	// scoring, scoreboard) sees the same identity on a request.
+	h = auth.AnonymousMiddleware(cfg.Auth.Secure)(h)
 
 	return h, eng, nil
 }

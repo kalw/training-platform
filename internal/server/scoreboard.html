@@ -33,6 +33,7 @@
 <header>
   <h1>Challenges &amp; results</h1>
   <a href="/">← back to lessons</a>
+  <span class="sub" id="whoami"></span>
 </header>
 <main>
   <section class="card">
@@ -62,6 +63,12 @@ async function load(){
   try {
     // Global view first: ranking across everyone, and how each challenge is
     // going. The per-solve list below stays the detailed/user-centric view.
+    // Tell the viewer which name their own solves are recorded under, and
+    // highlight their row below.
+    let me = '';
+    try { me = (await (await fetch('/api/v1/config')).json()).user || ''; } catch(e){}
+    document.getElementById('whoami').textContent = me ? `you are ${me}` : '';
+
     const sj=await (await fetch('/api/v1/standings')).json();
     const d=(sj.data||{}), rank=(d.ranking||[]), comp=(d.challenges||[]), total=d.total_points||0;
     const se=document.getElementById('standings'), coe=document.getElementById('completion');
@@ -69,7 +76,8 @@ async function load(){
       rank.length ? `${rank.length} learner(s) · ${total} points available` : '';
     se.innerHTML = rank.length ? rank.map((s,i)=>{
       const pct = total ? Math.round(100*s.points/total) : 0;
-      return `<tr><td class="rank">${i+1}</td><td class="user">${esc(s.user)}</td>`+
+      const mine = s.user===me ? ' — you' : '';
+      return `<tr><td class="rank">${i+1}</td><td class="user">${esc(s.user)}${mine}</td>`+
              `<td class="num">${s.solved}</td><td class="num">${s.points}</td>`+
              `<td><div class="bar" title="${pct}% of ${total}"><span style="width:${pct}%"></span></div></td></tr>`;
     }).join('') : '<tr><td class="empty" colspan="5">no solves yet</td></tr>';
