@@ -50,7 +50,7 @@ The renderer supports the authoring contract of the legacy lessons repo
 
 | Feature | Status |
 |---|---|
-| `terms:` front matter (0–6 terminal windows, one instance Pod each, PWD "node" semantics) | ✅ default 1; `0` = no console |
+| `terms:` front matter (0–6 terminal windows, one instance Pod each, PWD "node" semantics) | ✅ default 1; `0` = no console. Beyond the legacy contract, `term_images:` can give each terminal its own image |
 | ` ```.termN ` code blocks (click-to-run in terminal N) | ✅ |
 | `[text](/){:data-term=".termN"}{:data-port="XXXX"}` exposed-port links, plus optional `{:data-host-prefix="p"}` and `{:data-protocol="https:"}` | ✅ rewritten live to `[p-]ip<A-B-C-D>-<id>-<port>.<ROUTER_HOST>` once a session is up (same byte layout as the legacy SDK; protocol defaults to the page's, not the SDK's hardcoded `http:`) |
 | `SESSION_ID` / `PWD_HOST_FQDN` env inside instances (lesson snippets that echo service URLs) | ✅ injected at Pod creation; note the host is now `ip…-….${PWD_HOST_FQDN}` — `ROUTER_HOST` already includes any `direct.` subdomain |

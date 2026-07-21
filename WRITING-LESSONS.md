@@ -36,6 +36,7 @@ exercise_threshold: 20                  # Hamming threshold for the phash
 | `title` | page title; falls back to the slug |
 | `image` | the container image each session instance runs (a DinD image, or a custom exercise image) |
 | `terms` | number of terminal panels, **0–6**, one session Pod each. `0` renders a lesson with no console at all. Default 1. |
+| `term_images` | optional list giving each terminal its **own** image, positionally (entry 1 → node1). Shorter than `terms`, or a blank entry, falls back to `image:`. Omit it and every terminal boots `image:`. |
 | `exercise_expect` / `exercise_expect_regex` | assert the learner's result page **content**, graded server-side. Authoritative when set. |
 | `exercise_result` | reference page/image for perceptual-hash grading (`.html` rendered headlessly, `.png`/`.jpg` hashed directly) |
 | `exercise_threshold` | Hamming distance allowed for the phash (default 12 of 64) |
@@ -72,6 +73,26 @@ through verbatim).
 each — the legacy "PWD node" model. Panels are real
 [xterm.js](https://xtermjs.org) terminals bridged to `pods/exec`, with TTY
 resize wired through.
+
+### Different images per terminal
+
+By default every panel boots the lesson's `image:`. For a multi-node exercise
+that needs *different* sandboxes — a server and a client, a control plane and
+a worker — name them positionally with `term_images:`:
+
+```yaml
+image: busybox:1.36        # the fallback
+terms: 3
+term_images:
+  - nginx:alpine           # node1 — the server
+  - curlimages/curl:8.9.1  # node2 — the client
+                           # node3 gets busybox:1.36
+```
+
+Anything the list doesn't cover (it is shorter than `terms:`, or an entry is
+blank) falls back to `image:`, so you only name the nodes that differ. When a
+lesson mixes images, each panel is labelled with the one it runs — `node2`
+alone doesn't tell a learner which box they are typing into.
 
 ### Click-to-run code blocks
 

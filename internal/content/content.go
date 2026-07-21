@@ -34,6 +34,12 @@ type FrontMatter struct {
 	// instance each, mirroring the legacy `terms:` front-matter key. Nil
 	// defaults to 1; 0 renders a lesson with no console at all.
 	Terms *int `yaml:"terms"`
+	// TermImages optionally gives each terminal its own image, positionally:
+	// entry i is node i+1. Shorter than `terms:` (or an empty entry) falls
+	// back to `image:`, so a multi-node lesson only names the nodes that
+	// differ — e.g. a server on node1 and a client on node2. Without it every
+	// terminal boots the same `image:`.
+	TermImages []string `yaml:"term_images"`
 	// ExerciseResult selects the reference result page whose perceptual hash
 	// is computed at build time to grade this lesson's exercise. It's a path
 	// relative to the lessons directory (an .html rendered headlessly, or a
