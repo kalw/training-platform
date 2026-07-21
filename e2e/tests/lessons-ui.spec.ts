@@ -16,6 +16,23 @@ test.describe('lessons UI', () => {
     await expect(page.locator('article strong', { hasText: /server-side by hash/i })).toBeVisible();
   });
 
+  // Every panel names the image it runs, even when a lesson uses the same one
+  // everywhere — "which box am I typing into" is worth answering regardless.
+  test('each terminal panel is labelled with its image', async ({ page }) => {
+    // 03 runs the same image on both panels.
+    await page.goto('/03-fix-nginx-exercise.html');
+    const uniform = page.locator('.termhead .nimg');
+    await expect(uniform).toHaveCount(2);
+    for (const t of await uniform.allTextContents()) expect(t.trim()).not.toBe('');
+
+    // 04 mixes four images; each panel shows its own.
+    await page.goto('/04-multiple-images.html');
+    const mixed = await page.locator('.termhead .nimg').allTextContents();
+    expect(mixed.map((t) => t.trim())).toEqual([
+      'nginx:alpine', 'redis:alpine', 'busybox:1.36', 'alpine:3.20',
+    ]);
+  });
+
   test('quiz confirms SUBMISSION only — never reveals correct/incorrect', async ({ page }) => {
     await page.goto('/02-containers-quiz.html');
 

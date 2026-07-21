@@ -80,9 +80,11 @@ you write instead of showing up as a dead panel in a class:
 - `terms:` outside `0–6`
 - more `term_images:` entries than `terms:`
 - a ` ```.termN ` block or `{:data-term=".termN"}` link naming a terminal the
-  lesson doesn't boot Panels are real
-[xterm.js](https://xtermjs.org) terminals bridged to `pods/exec`, with TTY
-resize wired through.
+  lesson doesn't boot
+
+Panels are real [xterm.js](https://xtermjs.org) terminals bridged to
+`pods/exec`, with TTY resize wired through. Each is labelled with the image it
+runs.
 
 ### Different images per terminal
 
@@ -100,9 +102,9 @@ term_images:
 ```
 
 Anything the list doesn't cover (it is shorter than `terms:`, or an entry is
-blank) falls back to `image:`, so you only name the nodes that differ. When a
-lesson mixes images, each panel is labelled with the one it runs — `node2`
-alone doesn't tell a learner which box they are typing into.
+blank) falls back to `image:`, so you only name the nodes that differ. Every
+panel is labelled with the image it runs — mixed or not, `node2` alone doesn't
+tell a learner which box they are typing into.
 
 [`examples/lessons/04-multiple-images.md`](examples/lessons/04-multiple-images.md)
 is a worked example: four panels running nginx, redis and busybox, with the
