@@ -15,7 +15,7 @@ training build --src examples/lessons --out site --salt "$CTFD_SALT"
 ```
 
 See [`examples/lessons`](examples/lessons) for a plain lesson, a quiz, an
-exercise, and a two-image multi-node lesson. Those examples are deliberately
+exercise, and a four-panel multi-image lesson. Those examples are deliberately
 the only content in this repo; course material lives elsewhere.
 
 ## Front matter
@@ -94,9 +94,9 @@ blank) falls back to `image:`, so you only name the nodes that differ. When a
 lesson mixes images, each panel is labelled with the one it runs — `node2`
 alone doesn't tell a learner which box they are typing into.
 
-[`examples/lessons/04-two-nodes.md`](examples/lessons/04-two-nodes.md) is a
-worked example: nginx on `node1`, alpine on `node2`, and the client fetching
-the server across Pod IPs.
+[`examples/lessons/04-multiple-images.md`](examples/lessons/04-multiple-images.md)
+is a worked example: four panels running nginx, redis and busybox, with the
+fourth falling back to the lesson's `image:`.
 
 ### Click-to-run code blocks
 
