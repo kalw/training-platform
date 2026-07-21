@@ -2,9 +2,11 @@
 
 ## Install from the published chart
 
-The chart is published to GHCR as an OCI artifact on every `v*` tag — the
-same registry and credentials as the container image, so there is no
-`gh-pages` branch or chart index to maintain:
+The chart is published to GHCR as an OCI artifact on every release — which
+is cut automatically from Conventional Commits on `main`, see
+[DEVELOPMENT.md](DEVELOPMENT.md#releases). Same registry and credentials as
+the container image, so there is no `gh-pages` branch or chart index to
+maintain:
 
 ```sh
 helm install training oci://ghcr.io/kalw/charts/training-platform --version 0.1.0 \
@@ -86,4 +88,5 @@ run two side by side (e.g. staging next to a demo), give each its own:
 `helm lint` (plain and `--strict`) plus `helm template` under several value
 permutations — default, ingress + persistence + router, and the dev values —
 run on every push and PR, so a broken template fails before it ships.
-Packaging and publishing happen only on tags.
+Packaging and publishing happen in the release job, gated on those checks
+plus the unit and e2e suites passing.
