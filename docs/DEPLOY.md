@@ -9,19 +9,22 @@ the container image, so there is no `gh-pages` branch or chart index to
 maintain:
 
 ```sh
-helm install training oci://ghcr.io/kalw/charts/training-platform --version 0.1.0 \
+helm install training oci://ghcr.io/kalw/charts/training-platform \
   --namespace training --create-namespace \
   --set serve.salt=$CTFD_SALT \
   --set ingress.enabled=true --set ingress.host=training.example.com \
   --set persistence.enabled=true          # durable solves (recommended)
 ```
 
-The chart version equals the release tag, and its `appVersion` pins the
-image built from that same tag — so `--version 0.1.0` gets you the `0.1.0`
-platform image by default. List what's available with:
+Omitting `--version` installs the **latest** published chart; pass
+`--version X.Y.Z` to pin one. The chart version equals the release tag and
+its `appVersion` pins the image built from that same tag, so a chart version
+always gets you the matching platform image. Inspect what you would get, and
+list every published version:
 
 ```sh
-helm show chart oci://ghcr.io/kalw/charts/training-platform --version 0.1.0
+helm show chart oci://ghcr.io/kalw/charts/training-platform
+gh release list --repo kalw/training-platform
 ```
 
 > Like other new GHCR packages, `charts/training-platform` is **private on

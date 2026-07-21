@@ -69,6 +69,27 @@ Two implementation details worth knowing before editing that job:
 - **The image is retagged by digest**, not rebuilt: the release ships the
   exact artifact the e2e suite tested, and costs seconds instead of a second
   multi-arch build.
+- **The cross-compile matrix runs on PRs only.** On `main` the release job's
+  GoReleaser builds the same six targets, so running both just doubled the Go
+  compilation; a release that cannot compile still fails there.
+
+Release notes get an install footer (chart, image tag, and the local dev
+Quickstart link) from `release.footer` in
+[`.goreleaser.yaml`](../.goreleaser.yaml).
+
+### Versions in documentation
+
+**Never hardcode a released version in the docs** — CI fails the build if you
+do. They rot the moment the next release is cut (the docs still advertised
+`0.1.0` when `0.2.0` shipped). Instead:
+
+- `helm install oci://…/training-platform` with **no** `--version` resolves
+  the latest chart, and its `appVersion` pins the matching image;
+- link `/releases/latest/…` rather than a numbered release;
+- use `X.Y.Z` as a placeholder when illustrating the shape of a version.
+
+The README's release badge shows the current version, so the one place a
+version appears is generated.
 
 ## Testing
 

@@ -26,6 +26,20 @@ jobs:
           cache: true
       - run: go vet ./...
       - run: go test ./... -race -count=1
+      # Docs must not pin a chart/image version: they go stale the moment the
+      # next release is cut (they were still advertising 0.1.0 at 0.2.0).
+      # `helm install` without --version takes the latest, and
+      # /releases/latest/ URLs never rot — so a literal version in docs is a
+      # bug, not a nicety.
+      - name: docs do not hardcode a release version
+        run: |
+          if grep -rnE 'charts/training-platform.*--version[= ][0-9]|training-platform:[0-9]+\.[0-9]+\.[0-9]+' \
+               ./*.md ./docs/*.md 2>/dev/null; then
+            echo "::error::Hardcoded release version in docs — omit --version (latest) or use X.Y.Z as a placeholder."
+            exit 1
+          fi
+          echo "no pinned versions in docs"
+
       - name: gofmt check
         run: |
           out=$(gofmt -l .)
@@ -41,7 +55,12 @@ jobs:
 
   # Cross-compile every OS/arch and upload the binaries. Proves the whole
   # tree builds for each target (pure Go, no cgo) on every push/PR.
+  # Cross-compile check. Only on PRs: on main the release job's GoReleaser
+  # builds the exact same six targets, so running both doubles the Go
+  # compilation for no extra signal (and a release that can't compile fails
+  # there anyway).
   build-matrix:
+    if: github.event_name == 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     strategy:
@@ -173,7 +192,7 @@ jobs:
   # chart's appVersion would point at an image tag that was never pushed.
   release:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    needs: [test, build-matrix, e2e, image, chart]
+    needs: [test, e2e, image, chart]   # build-matrix is PR-only, see above
     runs-on: ubuntu-latest
     permissions:
       contents: write
