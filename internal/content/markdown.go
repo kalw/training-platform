@@ -77,6 +77,12 @@ var (
 	codeRe     = regexp.MustCompile("`([^`]+)`")
 	boldRe     = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	termInfoRe = regexp.MustCompile(`^\.term([1-6])$`)
+	// termRefRe finds every rendered reference to a terminal — the data-term
+	// of a click-to-run block or of a port link — so the build can check they
+	// all point at a node the lesson actually boots.
+	// Both spellings appear: click-to-run blocks render the bare index
+	// (data-term="2"), authored links keep the kramdown form (".term2").
+	termRefRe = regexp.MustCompile(`data-term="(?:\.?term)?(\d+)"`)
 	// linkRe optionally captures a run of kramdown inline attribute lists
 	// after the link. It runs on HTML-escaped text, hence &#34; for quotes.
 	linkRe    = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)((?:\{:[^{}]*\})*)`)

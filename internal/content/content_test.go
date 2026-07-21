@@ -171,7 +171,9 @@ func TestAuthoredExerciseDemoLinkPairing(t *testing.T) {
 	// inline link dropped the button, and the default button hit port 80 not
 	// the exercise's real result-page port). The button adopts port/path/term;
 	// the marked link stays inline as a plain port link.
-	src := []byte("---\ntitle: E\n---\n" +
+	// terms: 2 because the link below targets .term2 — the build rejects a
+	// reference to a terminal the lesson doesn't boot.
+	src := []byte("---\ntitle: E\nterms: 2\n---\n" +
 		"{% exercise %}\nFix it so " +
 		"[webserver](/status){:id=\"exerciseDemo\"}{:data-term=\".term2\"}{:data-port=\"8888\"} is green.\n" +
 		"{% endexercise %}\n")
