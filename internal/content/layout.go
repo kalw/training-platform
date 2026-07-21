@@ -165,17 +165,24 @@ function buildPanels(){
   for(let n=1; n<=TERMS; n++){
     const wrap = document.createElement('div');
     wrap.className = 'termwrap';
-    // Label the node with its image when the lesson mixes them — with
-    // node1 on nginx and node2 on busybox, "node2" alone tells you nothing.
+    // Always label the node with its image, mixed or not: "which box am I
+    // typing into" is worth answering even when every panel runs the same
+    // one. Empty only when the lesson names no image — then the server picks
+    // its default and bootNode fills the label in from the API response.
     const img = TERM_IMAGES[n-1] || lessonImage;
-    const mixed = TERM_IMAGES.some(i => i !== TERM_IMAGES[0]);
-    const imgTag = (mixed && img) ? ' <span class="pill">'+esc(img)+'</span>' : '';
-    wrap.innerHTML = '<div class="termhead">node'+n+imgTag+' <span class="pill nstatus">idle</span></div>'+
+    wrap.innerHTML = '<div class="termhead">node'+n+
+                     ' <span class="pill nimg">'+esc(img||'')+'</span>'+
+                     ' <span class="pill nstatus">idle</span></div>'+
                      '<div class="termbox"><div class="term term'+n+'"></div></div>';
     holder.appendChild(wrap);
     nodes.push({ name:'node'+n, el:wrap, image:(TERM_IMAGES[n-1]||lessonImage),
                  pod:null, ip:null, term:null, fit:null, ro:null, ws:null, retries:0, stopped:false });
   }
+}
+
+function setNodeImage(node, img){
+  const el = node.el.querySelector('.nimg');
+  if(el) el.textContent = img || '';
 }
 
 function nodeStatus(node, text, ok){
@@ -255,6 +262,9 @@ async function bootNode(node){
   }
   const j = await r.json();
   node.pod = j.pod; node.ip = j.ip;
+  // The server reports the image it actually booted — authoritative when the
+  // lesson named none and the platform default was used.
+  if(j.image){ node.image = j.image; setNodeImage(node, j.image); }
   makeTerm(node);
   connect(node);
   return j.expires_at;
