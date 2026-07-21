@@ -14,9 +14,9 @@ challenges can never disagree on a hash.
 training build --src examples/lessons --out site --salt "$CTFD_SALT"
 ```
 
-See [`examples/lessons`](examples/lessons) for a plain, a quiz and an
-exercise lesson. Those examples are deliberately the only content in this
-repo; course material lives elsewhere.
+See [`examples/lessons`](examples/lessons) for a plain lesson, a quiz, an
+exercise, and a two-image multi-node lesson. Those examples are deliberately
+the only content in this repo; course material lives elsewhere.
 
 ## Front matter
 
@@ -93,6 +93,10 @@ Anything the list doesn't cover (it is shorter than `terms:`, or an entry is
 blank) falls back to `image:`, so you only name the nodes that differ. When a
 lesson mixes images, each panel is labelled with the one it runs — `node2`
 alone doesn't tell a learner which box they are typing into.
+
+[`examples/lessons/04-two-nodes.md`](examples/lessons/04-two-nodes.md) is a
+worked example: nginx on `node1`, alpine on `node2`, and the client fetching
+the server across Pod IPs.
 
 ### Click-to-run code blocks
 
