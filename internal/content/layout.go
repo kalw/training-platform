@@ -1,6 +1,7 @@
 package content
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"strings"
@@ -38,8 +39,23 @@ func layout(fm FrontMatter, body string) string {
 		console = consoleTmpl
 		mainClass = "split"
 	}
+	// Resolve one image per terminal: term_images positionally, falling back
+	// to the lesson's image: wherever it's absent or blank. Doing it here
+	// means the page never has to know the fallback rule.
+	images := make([]string, terms)
+	for i := range images {
+		images[i] = fm.Image
+		if i < len(fm.TermImages) && strings.TrimSpace(fm.TermImages[i]) != "" {
+			images[i] = strings.TrimSpace(fm.TermImages[i])
+		}
+	}
+	imagesJSON, err := json.Marshal(images)
+	if err != nil { // a []string always marshals; keep the page renderable
+		imagesJSON = []byte("[]")
+	}
+
 	page := strings.Replace(pageTmpl, "__CONSOLE__", console, 1)
-	return fmt.Sprintf(page, html.EscapeString(title), mainClass, body, fm.Image, terms)
+	return fmt.Sprintf(page, html.EscapeString(title), mainClass, body, fm.Image, terms, string(imagesJSON))
 }
 
 // consoleTmpl is the console column: session controls plus a #terms holder
@@ -56,7 +72,8 @@ const consoleTmpl = `<div class="col">
     </div></section>
   </div>`
 
-// Template arguments: %s title, %s main class, %s body, %q image, %d terms.
+// Template arguments: %s title, %s main class, %s body, %q image, %d terms,
+// %s per-terminal images (JSON array).
 const pageTmpl = `<!doctype html>
 <html lang="en">
 <head>
@@ -119,6 +136,8 @@ const pageTmpl = `<!doctype html>
 <script>
 const lessonImage = %q;
 const TERMS = %d;
+// One image per terminal (term_images, falling back to the lesson image).
+const TERM_IMAGES = %s;
 
 // ---------------------------------------------------------------------------
 // Console: one session instance (Pod) per terminal, PWD "node" semantics.
@@ -128,7 +147,7 @@ const TERMS = %d;
 // ---------------------------------------------------------------------------
 const store = { key: 'tp-session:' + location.pathname,
   load(){ try { return JSON.parse(sessionStorage.getItem(this.key)); } catch(e){ return null; } },
-  save(pods){ sessionStorage.setItem(this.key, JSON.stringify({pods, image: lessonImage})); },
+  save(pods){ sessionStorage.setItem(this.key, JSON.stringify({pods, images: TERM_IMAGES})); },
   clear(){ sessionStorage.removeItem(this.key); } };
 
 const nodes = [];      // [{name, pod, ip, term, fit, ws, retries, stopped}]
@@ -136,6 +155,7 @@ let keepaliveTimer = null;
 let routerHost = null; // from /api/v1/config, for exposed-port links
 
 const $ = (s)=>document.querySelector(s);
+const esc = (s)=>String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const setStatus = (t, ok)=>{ const el=$('#tstatus'); if(el){ el.textContent=t; el.style.color = ok?'var(--ok)':'var(--muted)'; } };
 
 function buildPanels(){
@@ -145,10 +165,16 @@ function buildPanels(){
   for(let n=1; n<=TERMS; n++){
     const wrap = document.createElement('div');
     wrap.className = 'termwrap';
-    wrap.innerHTML = '<div class="termhead">node'+n+' <span class="pill nstatus">idle</span></div>'+
+    // Label the node with its image when the lesson mixes them — with
+    // node1 on nginx and node2 on busybox, "node2" alone tells you nothing.
+    const img = TERM_IMAGES[n-1] || lessonImage;
+    const mixed = TERM_IMAGES.some(i => i !== TERM_IMAGES[0]);
+    const imgTag = (mixed && img) ? ' <span class="pill">'+esc(img)+'</span>' : '';
+    wrap.innerHTML = '<div class="termhead">node'+n+imgTag+' <span class="pill nstatus">idle</span></div>'+
                      '<div class="termbox"><div class="term term'+n+'"></div></div>';
     holder.appendChild(wrap);
-    nodes.push({ name:'node'+n, el:wrap, pod:null, ip:null, term:null, fit:null, ro:null, ws:null, retries:0, stopped:false });
+    nodes.push({ name:'node'+n, el:wrap, image:(TERM_IMAGES[n-1]||lessonImage),
+                 pod:null, ip:null, term:null, fit:null, ro:null, ws:null, retries:0, stopped:false });
   }
 }
 
@@ -220,7 +246,7 @@ function connect(node){
 async function bootNode(node){
   nodeStatus(node, 'starting…', false);
   const r = await fetch('/api/v1/sessions', { method:'POST',
-    headers:{'Content-Type':'application/json'}, body:JSON.stringify({image:lessonImage}) });
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({image:node.image}) });
   if(!r.ok){
     let msg = 'start failed ('+r.status+')';
     try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
@@ -238,7 +264,10 @@ async function reattach(saved){
   // A reload reuses running Pods: state inside them (files, containers)
   // survives; only the shell is new. Falls back to a fresh boot when any
   // Pod is gone or the lesson image changed.
-  if(!saved || saved.image !== lessonImage || !Array.isArray(saved.pods) || saved.pods.length !== TERMS) return false;
+  // Reattach only to pods booted from the same images — editing a lesson's
+  // images must not silently reuse sandboxes built from the old ones.
+  if(!saved || !Array.isArray(saved.pods) || saved.pods.length !== TERMS) return false;
+  if(JSON.stringify(saved.images) !== JSON.stringify(TERM_IMAGES)) return false;
   const stats = await Promise.all(saved.pods.map(p =>
     fetch('/api/v1/sessions/'+p).then(r => r.ok ? r.json() : null).catch(()=>null)));
   if(stats.some(s => !s || !s.ready)) return false;

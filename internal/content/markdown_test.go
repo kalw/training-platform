@@ -70,3 +70,54 @@ func TestTermsFrontMatterControlsConsole(t *testing.T) {
 		t.Error("terms should clamp to 6")
 	}
 }
+
+// term_images gives each terminal its own image, positionally, falling back
+// to the lesson's image: — so a multi-node lesson only names what differs.
+func TestPerTerminalImages(t *testing.T) {
+	render := func(fm string) string {
+		l, err := Render("x", []byte("---\n"+fm+"\n---\nbody\n"), "s", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l.HTML
+	}
+
+	// Explicit per-node images.
+	html := render("image: busybox:1.36\nterms: 2\nterm_images:\n  - nginx:alpine\n  - curlimages/curl:8.9.1")
+	if !strings.Contains(html, `const TERM_IMAGES = ["nginx:alpine","curlimages/curl:8.9.1"]`) {
+		t.Errorf("per-terminal images not rendered:\n%s", firstLineWith(html, "TERM_IMAGES"))
+	}
+
+	// Shorter list, and a blank entry, both fall back to image:.
+	html = render("image: busybox:1.36\nterms: 3\nterm_images:\n  - nginx:alpine\n  - \"\"")
+	if !strings.Contains(html, `const TERM_IMAGES = ["nginx:alpine","busybox:1.36","busybox:1.36"]`) {
+		t.Errorf("fallback to image: wrong:\n%s", firstLineWith(html, "TERM_IMAGES"))
+	}
+
+	// No term_images at all: every terminal gets the lesson image (the old
+	// behaviour, unchanged).
+	html = render("image: busybox:1.36\nterms: 2")
+	if !strings.Contains(html, `const TERM_IMAGES = ["busybox:1.36","busybox:1.36"]`) {
+		t.Errorf("default should repeat image::\n%s", firstLineWith(html, "TERM_IMAGES"))
+	}
+
+	// terms: 0 -> no terminals, so no images.
+	if html := render("image: busybox:1.36\nterms: 0"); !strings.Contains(html, `const TERM_IMAGES = []`) {
+		t.Errorf("terms: 0 should yield an empty image list:\n%s", firstLineWith(html, "TERM_IMAGES"))
+	}
+
+	// More images than terminals: the extras are ignored, not rendered.
+	html = render("image: busybox:1.36\nterms: 1\nterm_images:\n  - nginx:alpine\n  - ignored:1")
+	if !strings.Contains(html, `const TERM_IMAGES = ["nginx:alpine"]`) {
+		t.Errorf("extra term_images should be dropped:\n%s", firstLineWith(html, "TERM_IMAGES"))
+	}
+}
+
+func firstLineWith(s, needle string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, needle) {
+			return l
+		}
+	}
+	return "(not found)"
+}
