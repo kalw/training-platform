@@ -38,3 +38,26 @@ changelog:
 
 release:
   prerelease: auto
+  # Every release links back to how to run it — the deploy path (published
+  # chart) and the local dev loop — so the notes are useful on their own
+  # without hunting through the repo. Versions are deliberately not pinned
+  # here: `helm install` without --version takes the latest, and the
+  # /releases/latest/ URLs never go stale.
+  footer: |
+    ## Install
+
+    **Kubernetes** — the chart is published alongside this release:
+
+    ```sh
+    helm install training oci://ghcr.io/kalw/charts/training-platform \
+      --namespace training --create-namespace \
+      --set serve.salt=$CTFD_SALT --set persistence.enabled=true
+    ```
+
+    **Container image** — `ghcr.io/kalw/training-platform:{{ .Version }}`
+
+    **Run it locally / hack on it** —
+    [Quickstart](https://github.com/kalw/training-platform/tree/main#quickstart-hacking-on-it)
+    (kind + four make targets), and
+    [docs/DEVELOPMENT.md](https://github.com/kalw/training-platform/blob/main/docs/DEVELOPMENT.md)
+    for the full dev loop.

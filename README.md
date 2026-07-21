@@ -33,7 +33,7 @@ class scoreboard.
 The Helm chart is published to GHCR alongside the image:
 
 ```sh
-helm install training oci://ghcr.io/kalw/charts/training-platform --version 0.1.0 \
+helm install training oci://ghcr.io/kalw/charts/training-platform \
   --namespace training --create-namespace \
   --set serve.salt="$CTFD_SALT" --set persistence.enabled=true
 ```
