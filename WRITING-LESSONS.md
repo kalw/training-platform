@@ -35,8 +35,8 @@ exercise_threshold: 20                  # Hamming threshold for the phash
 |---|---|
 | `title` | page title; falls back to the slug |
 | `image` | the container image each session instance runs (a DinD image, or a custom exercise image) |
-| `terms` | number of terminal panels, **0–6**, one session Pod each. `0` renders a lesson with no console at all. Default 1. |
-| `term_images` | optional list giving each terminal its **own** image, positionally (entry 1 → node1). Shorter than `terms`, or a blank entry, falls back to `image:`. Omit it and every terminal boots `image:`. |
+| `terms` | number of terminal panels, **0–6** (hard cap), one session Pod each. `0` renders a lesson with no console at all. Default 1. Out of range fails the build. |
+| `term_images` | optional list giving each terminal its **own** image, positionally (entry 1 → node1). Shorter than `terms`, or a blank entry, falls back to `image:`; **longer** fails the build. Omit it and every terminal boots `image:`. |
 | `exercise_expect` / `exercise_expect_regex` | assert the learner's result page **content**, graded server-side. Authoritative when set. |
 | `exercise_result` | reference page/image for perceptual-hash grading (`.html` rendered headlessly, `.png`/`.jpg` hashed directly) |
 | `exercise_threshold` | Hamming distance allowed for the phash (default 12 of 64) |
@@ -70,7 +70,17 @@ through verbatim).
 ## Terminals
 
 `terms:` gives the page N terminal panels, `node1`…`nodeN`, one session Pod
-each — the legacy "PWD node" model. Panels are real
+each — the legacy "PWD node" model. **N is capped at 6**, inherited from the
+legacy contract and kept as a resource guardrail: every panel is a privileged
+Pod, per learner. There is no way to raise it from a lesson.
+
+The build **fails** rather than trimming quietly, so these are caught while
+you write instead of showing up as a dead panel in a class:
+
+- `terms:` outside `0–6`
+- more `term_images:` entries than `terms:`
+- a ` ```.termN ` block or `{:data-term=".termN"}` link naming a terminal the
+  lesson doesn't boot Panels are real
 [xterm.js](https://xtermjs.org) terminals bridged to `pods/exec`, with TTY
 resize wired through.
 

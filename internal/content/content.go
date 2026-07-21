@@ -62,6 +62,54 @@ type FrontMatter struct {
 	ExerciseExpectRegex string `yaml:"exercise_expect_regex"`
 }
 
+// MaxTerminals is the ceiling on terminal panels per lesson, inherited from
+// the legacy writing-tutorials.md contract (an integer between 0 and 6). It
+// is a resource guardrail as much as a layout one: every panel is a
+// privileged Pod, per learner.
+const MaxTerminals = 6
+
+// terminals is the number of panels this lesson renders (after defaulting).
+func (fm FrontMatter) terminals() int {
+	if fm.Terms == nil {
+		return 1
+	}
+	return *fm.Terms
+}
+
+// checkTermRefs fails the build when the page references a terminal the
+// lesson doesn't have.
+func checkTermRefs(html string, terms int) error {
+	seen := map[string]bool{}
+	for _, m := range termRefRe.FindAllStringSubmatch(html, -1) {
+		n, _ := strconv.Atoi(m[1])
+		if n > terms && !seen[m[0]] {
+			seen[m[0]] = true
+			if terms == 0 {
+				return fmt.Errorf("references .term%d but the lesson has no terminals (terms: 0)", n)
+			}
+			return fmt.Errorf("references .term%d but the lesson only has %d terminal(s) — raise terms:", n, terms)
+		}
+	}
+	return nil
+}
+
+// validateTerminals rejects front matter the renderer would otherwise have to
+// silently trim.
+func (fm FrontMatter) validateTerminals() error {
+	terms := 1
+	if fm.Terms != nil {
+		terms = *fm.Terms
+	}
+	if terms < 0 || terms > MaxTerminals {
+		return fmt.Errorf("terms: %d is out of range (0-%d)", terms, MaxTerminals)
+	}
+	if n := len(fm.TermImages); n > terms {
+		return fmt.Errorf("term_images: has %d entries but terms: is %d — "+
+			"the extra image(s) would be ignored", n, terms)
+	}
+	return nil
+}
+
 // ExerciseResolver computes an exercise's reference phash flag from its
 // result reference at build time. *PhashResolver implements it; tests inject
 // a stub. A nil resolver means exercises are recorded without grading.
@@ -97,6 +145,15 @@ func Render(slug string, src []byte, salt string, resolver ExerciseResolver) (*L
 		return nil, err
 	}
 	l := &Lesson{Slug: slug, FrontMatter: fm}
+
+	// Reject a lesson that asks for more than the platform gives rather than
+	// quietly trimming it: the author would get fewer panels than they wrote,
+	// their .termN blocks past the limit would render as dead code fences,
+	// and a {:data-term=} link to a missing node reports "start a session
+	// first" — three confusing symptoms for one typo.
+	if err := fm.validateTerminals(); err != nil {
+		return nil, err
+	}
 
 	// Extract quiz/exercise blocks, replacing each with an HTML placeholder
 	// that survives Markdown rendering, then render the remaining Markdown.
@@ -142,6 +199,13 @@ func Render(slug string, src []byte, salt string, resolver ExerciseResolver) (*L
 		rendered = strings.Replace(rendered, placeholderToken(i), ph, 1)
 	}
 	rendered, routings := pairDemoLinks(rendered, l.exerciseHashes)
+
+	// A .termN block or {:data-term=".termN"} link pointing at a node this
+	// lesson never boots is dead on the page (the block does nothing; the
+	// link claims "start a session first" forever). Catch it at build time.
+	if err := checkTermRefs(rendered, fm.terminals()); err != nil {
+		return nil, err
+	}
 
 	// Server-side content verification: the page to fetch is the exercise's
 	// demo routing (adopted from the authored mark, or the defaults), and
